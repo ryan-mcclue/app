@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: zlib-acknowledgement
+
+*
+
+!*/
+
+!.gitignore
+
+!ubuntu-app.c
+!ubuntu-build.bash
