@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: zlib-acknowledgement
 
-// NOTE(Ryan): Called by C runtime library which performs platform specific operations (TODO(Ryan): stack probes?) to create an environment that the compiler expects to create an executable from our code.
+// NOTE(Ryan): Called by C runtime library which performs platform specific operations 
+// (TODO(Ryan): stack probes?) to create an environment that the compiler expects to create an executable from our code.
 // It's included with every C compiler as mandated by the C specification.
 // ISO creates specifications, which are ratified by national standards bodies, e.g. ANSI
 // The final C specification is not free, however draft versions are.
