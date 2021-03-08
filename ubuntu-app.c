@@ -9,6 +9,7 @@
 // TODO(Ryan): Investigate embeddedartistry.com what happens before main(). we still don't have source for _start()?
 // TODO(Ryan): Investigate how linking works, e.g. finding memory addresses of libraries?
 // NOTE(Ryan): crt on linux handles posix syscalls. unlike windows which is full of constantly changing many dll files. so linking with it is fine
+// spec only relevent to the extent at which compilers implement them. so focus on what compilers do
 
 // specific registers used as function parameters? 
 // ABI is interface between two binary modules (often dictate stack alignment). OS determines ABI, which contains calling convention or compiler?
@@ -60,8 +61,97 @@
 // why is SYSCALL an x86 opcode? why would it expect an OS?
 
 // why does os start in 16bit mode? the instructions it executes must be 16bits?
-int
-main(int argc, char *argv[])
+
+// process allocated its own memory space by OS?
+// is dynamic linking replacing addresses?
+
+// codec is compressor/decompressor
+
+// 3d is very transient, 2d is timeless. 3d is a superset of 2d, so you need to master 2d first
+
+// why would OS determine support for AVX2?, e.g. windows 7 vs windows 8
+int main(int argc, char *argv[])
 {
   return 0;
 }
+
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+void networking()
+{
+  // client
+  // game queues messages to be sent and the platform processes/reads them?
+  // id(u32) | id | data(u8 *)
+  enum ClientMessageID {
+    JOIN, LEAVE, INPUT
+  }
+
+  u32 max_clients = 32;
+
+  int socket_fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_IP);
+  if (socket_fd == -1) { // errno }
+
+  IPEndpoint endpoint = {
+    .ip = (127 << 24) | (0 << 16) | (0 << 8) | 0,
+    .port = 9999
+  };
+
+  u32 client_buffer_size = 1024; // MTU?
+  u8 client_buffer[client_buffer_size] = {0};
+  client_buffer[0] = ClientMessageID.JOIN;
+
+  struct sockaddr_in receiver = {0};
+  receiver.sin_addr.s_addr = inet_addr("ip");
+  receiver.sin_family = AF_INET;
+  receiver.sin_port = htons(80);
+  int send_res = sendto(socket_fd, client_buffer, 1, 0, (struct sockaddr *)&receiver, sizeof(receiver));
+  if (send_res == -1) { // errno }
+
+  while (running) {
+    // platform messages, e.g. window, input 
+    
+    while (receive_message(socket)) {
+      switch (buffer[0]) {
+        case ServerMessage.JoinResult: {
+          slot = buffer[2]; // our id? 
+        } break;
+        case ServerMessage.State: {
+          // loop over player state array and memcpy buffer                            
+        } break;
+      }
+    }
+
+    // send input
+    if (slot != UNUSED) {
+      buffer[0] = InputMsgID;
+      buffer[1] = OurId;
+      // add in actual input and send
+    }
+
+    // draw through all players
+  }
+
+  send_message(LEAVE);
+
+  // server
+  // thread safe message queue?, client_id
+  // send_message(socket, buf, buf_size, ip_endpoint), receive_message(), broadcast_message(), 
+  // connection(), disconnection()
+
+  // id(u32) | data(u8 *)
+  enum ServerMessageID {
+    JOIN_RESULT, STATE
+  }
+
+  server.sin_addr.s_addr = htonl(INADDR_ANY);
+  //
+  // use console messages for big things to help with debugging, e.g. connect/disconnect
+
+  /* struct IPEndpoint { u32 address; u16 port; }
+     struct ClientState {}
+     struct ClientInput {}
+  */
+
+} 
+
