@@ -85,12 +85,16 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 
+#include <libudev.h>
+
 #include <unistd.h>
 #include <sys/mman.h>
 
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <errno.h>
+#include <string.h>
 
 #define INTERNAL static
 #define GLOBAL static
@@ -103,7 +107,12 @@ typedef uint8_t u8;
 #define TERABYTES(num) (MEGABYTES(num) * 1024UL)
 
 #define ASSERT(expr) (expr) ? (void)0 : DEBUGGER_BREAK()
-void DEBUGGER_BREAK(void) { return; }
+void 
+DEBUGGER_BREAK(void) 
+{ 
+  char *errno_msg = strerror(errno);
+  return; 
+}
 
 INTERNAL uint 
 align_pow2(uint val, uint align)
@@ -214,8 +223,6 @@ int main(int argc, char *argv[])
 
   }
 
-  XFlush(display);
-
   // look at window manager docs for more information
   // atom just key-value pair, i.e. atom-property
   Atom delete_window = XInternAtom(display, "WM_DELETE_WINDOW", False);
@@ -228,7 +235,35 @@ int main(int argc, char *argv[])
     // TODO(Ryan): Error logging
     DEBUGGER_BREAK();
   }
- 
+
+  XFlush(display);
+
+  struct udev *udev_obj = udev_new();
+  if (udev_obj == NULL) {
+    // TODO(Ryan): Error logging
+    DEBUGGER_BREAK(); 
+  }
+  // TODO(Ryan): Does specifying "kernel" bypass user specified udev rules?
+  struct udev_monitor *udev_mon = udev_monitor_new_from_netlink(udev_obj, "udev");
+  if (udev_mon == NULL) {
+    // TODO(Ryan): Error logging
+    DEBUGGER_BREAK(); 
+  }
+
+  if (udev_monitor_filter_add_match_subsystem_devtype(udev_mon, "input", NULL) != 0) {
+    // TODO(Ryan): Error logging
+    DEBUGGER_BREAK(); 
+  }
+  if (udev_monitor_enable_receiving(udev_mon) != 0) {
+    // TODO(Ryan): Error logging
+    DEBUGGER_BREAK(); 
+  }
+
+  // udev uses non-blocking sockets by default  
+
+  // evdev exposes device driver events to userspace. udev processes the uevents sent out
+  // over a netlink socket (IPC often used between kernel and userspace processes)
+
   int bytes_per_pixel = 4;
   uint pixel_buffer_width = window_width;
   uint pixel_buffer_height = window_height;
