@@ -243,6 +243,45 @@ int main(int argc, char *argv[])
     // TODO(Ryan): Error logging
     DEBUGGER_BREAK(); 
   }
+  
+  struct udev_enumerate *udev_enum = udev_enumerate_new(udev_obj);
+  if (udev_enum == NULL) {
+    // TODO(Ryan): Error logging
+    DEBUGGER_BREAK(); 
+  }
+  if (udev_enumerate_add_match_subsystem(udev_enum, "input") != 0) {
+    // TODO(Ryan): Error logging
+    DEBUGGER_BREAK(); 
+  }
+  if (udev_enumerate_scan_devices(udev_enum) != 0) {
+    // TODO(Ryan): Error logging
+    DEBUGGER_BREAK(); 
+  }
+
+  struct udev_list_entry *udev_entries = udev_enumerate_get_list_entry(udev_enum);
+  if (udev_entries == NULL) {
+    // TODO(Ryan): Error logging
+    DEBUGGER_BREAK(); 
+  }
+
+  struct udev_list_entry *udev_entry = NULL;
+
+  // keyboards, controllers, mice, sound
+  udev_list_entry_foreach(udev_entry, udev_entries) {
+    char const *udev_entry_syspath = udev_list_entry_get_name(udev_entry);
+    struct udev_device *device = udev_device_new_from_syspath(udev_obj, 
+                                                              udev_entry_syspath);
+    char const *device_property_val = udev_device_get_property_value(device, 
+                                                                     "ID_INPUT_KEY");
+    if (strcmp(device_property_val, "1") == 0) {
+
+    }
+  }
+  // what is the deal with unref()?
+
+
+
+  // udev monitor only for checking for added/removed events
   // TODO(Ryan): Does specifying "kernel" bypass user specified udev rules?
   struct udev_monitor *udev_mon = udev_monitor_new_from_netlink(udev_obj, "udev");
   if (udev_mon == NULL) {
