@@ -85,6 +85,7 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 
+#include <linux/input-event-codes.h>
 #include <libudev.h>
 
 #include <unistd.h>
@@ -291,10 +292,51 @@ int main(int argc, char *argv[])
 
   typedef struct {
     char *sys_path;
+    char *name; // e.g sidewinder pro
     int fd;
   } Device;
+    /*
+       To get name:
+       struct input_id inpid;
+       char product_string[128];
+       ioctl(fd, EVIOCGID, &inpid);
+       ioctl(fd, EVIOCGNAME(sizeof(product_string)), product_string);
+       inpid.vendor; inpid.product; product_string;
+      */
+
+  // linux/SDL_sysjoystick.c
+  // ->PollAllValues()
+
+  /*
+     ASSUMING CONVENTIONAL GAMEPAD LAYOUT, i.e. certain buttons are analog/digital 
+
+      dpads -> BTN_DPAD_UP/LEFT/RIGHT/DOWN
+      sticks -> (ABS_X/ABS_Y/BTN_THUMBL), (ABS_RX/ABS_RY/BTN_THUMBR)
+
+      upper-triggers -> BTN_TL/BTN_TR
+      lower-triggers -> ABS_HAT2Y/ABS_HAT2X 
+      
+      misc -> BTN_START/BTN_SELECT/BTN_MODE
+
+      struct input_absinfo absinfo;
+      unsigned long keyinfo[NBITS(KEY_MAX)];
+      for (int i = ABS_X; i < ABS_MAX; i++) {
+        ioctl(fd, EVIOCGABS(i), &absinfo);
+        absinfo.value = some_clamping_deadzone_here 
+        negative values are left/up
+      }
+  */
 
   device->fd = open(sys_path, O_RDONLY | O_NONBLOCK);
+
+  // look at kernel development community for linux docs?
+
+  // kernel dev comm docs for force feedback
+  struct ff_effect rumble_effect;
+  struct input_event rumble_event;
+  rumble_event.type = EV_FF;
+  rumble_event.code = rumble_effect.id;
+  rumble_event.value = 3;
 
 
   udev_enumerate_unref(udev_enum);
@@ -326,6 +368,7 @@ int main(int argc, char *argv[])
             /*
                How to check and read for mouse?
                events[i].code == BTN_MOUSE?
+               also have events[i].code == BTN_GAMEPAD?
              */
           } break;
           case EV_ABS: {
