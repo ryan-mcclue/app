@@ -265,20 +265,89 @@ int main(int argc, char *argv[])
   }
 
   struct udev_list_entry *udev_entry = NULL;
-
-  // keyboards, controllers, mice, sound
   udev_list_entry_foreach(udev_entry, udev_entries) {
     char const *udev_entry_syspath = udev_list_entry_get_name(udev_entry);
     struct udev_device *device = udev_device_new_from_syspath(udev_obj, 
                                                               udev_entry_syspath);
-    char const *device_property_val = udev_device_get_property_value(device, 
-                                                                     "ID_INPUT_KEY");
-    if (strcmp(device_property_val, "1") == 0) {
 
+    char const *device_property_val = udev_device_get_property_value(device, 
+                                                                     "ID_INPUT_KEYBOARD");
+    if (strcmp(device_property_val, "1") == 0) {
+      
+    }
+    char const *device_property_val = udev_device_get_property_value(device, 
+                                                                     "ID_INPUT_MOUSE");
+    if (strcmp(device_property_val, "1") == 0) {
+      
+    }
+    char const *device_property_val = udev_device_get_property_value(device, 
+                                                                     "ID_INPUT_JOYSTICK");
+    if (strcmp(device_property_val, "1") == 0) {
+      
+    }
+
+    udev_device_unref(device);
+  }
+
+  typedef struct {
+    char *sys_path;
+    int fd;
+  } Device;
+
+  device->fd = open(sys_path, O_RDONLY | O_NONBLOCK);
+
+
+  udev_enumerate_unref(udev_enum);
+
+  // first check monitor for device added or removed
+  // then go through devices and read them
+  
+  // it seems that the kernel will send a SYN event to indicate
+  // that the series of sent events all belong together
+  // look into this more if SDL2 adopts this
+  struct input_events events[32];
+  int len = 0;
+  for (item = list->first; item != NULL; item = list->next) {
+    while (len = (read(item->fd, events, sizeof(events))) > 0) {
+      len /= sizeof(events[0]);  
+      // get a list of supported event types for the device?
+      // a device will support an event type, which can be further
+      // classified into an event code
+
+      // look at kernel source tree input-event-codes.h?
+      for (int i = 0; i < len; ++i) {
+        switch (events[i].type) {
+          case EV_KEY: {
+            /*
+               If events[i].code is a keyboard key, e.g. KEY_W
+               Then if events[i].value == 0, key is released
+               Else if == 1 or == 2 (repeated) is pressed
+             */
+            /*
+               How to check and read for mouse?
+               events[i].code == BTN_MOUSE?
+             */
+          } break;
+          case EV_ABS: {
+            switch (events[i].code) {
+              case ABS_X/ABS_Y: {
+                // could be mouse?
+                // events[i].value?
+              } break;
+            }
+          } break;
+          case EV_REL: {
+            switch (events[i].code) {
+              case REL_X/REL_Y/REL_WHEEL/REL_HWHEEL: {
+                // could be mouse?
+                // events[i].value?
+              } break;
+            }
+          } break;
+        }
+      }
     }
   }
-  // what is the deal with unref()?
-
 
 
   // udev monitor only for checking for added/removed events
