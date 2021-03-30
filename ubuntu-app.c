@@ -84,9 +84,31 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
+// extensions to to the x11 protocol
+#include <X11/extensions/Xrandr.h>
+// https://stackoverflow.com/questions/37995551/discrepancy-between-command-line-xrandr-and-own-code/38222346#38222346
+// XRRScreenConfiguration *conf = XRRGetScreenInfo(dpy, root);
+// short refresh_rate = XRRConfigCurrentRate(conf);
+// The refresh rate depends on the resolution you are running at. So, maybe have to check this first
+// Depending on the version in use by server, functions will be different, e.g. xrandr 1.2
+
+// XRRScreenChangeNotifyEvent for resolution changes
+/*
+  XRRGetScreenSizeRange(dpy, root, &minWidth, &minHeight, &maxWidth, &maxHeight);
+  XRRScreenResources *res = XRRGetScreenResources(display, root);
+
+  for (int i = 0; i < output_info->nmodes; ++i) {
+    find_mode_by_xid();
+    XRRModeInfo *mode;
+  }
+
+  xrandr for multiple monitor setups
+*/
 
 #include <linux/input-event-codes.h>
 #include <libudev.h>
+
+#include <alsa/asoundlib.h>
 
 #include <unistd.h>
 #include <sys/mman.h>
@@ -281,8 +303,27 @@ int main(int argc, char *argv[])
     if (strcmp(device_property_val, "1") == 0) {
       
     }
+    // sysattr also
     char const *device_property_val = udev_device_get_property_value(device, 
                                                                      "ID_INPUT_JOYSTICK");
+  // sysfs (/sys) is a memory file system that exposes system information to userspace
+  // udev (/dev) utilises information from sysfs for devices. udev daemon listens
+  // to uevents from kernel and will act accordingly based on rules in /etc/udev and information in sysfs
+  // /dev/sda (storage device a) /dev/sda1 partition 1, /dev/sdb
+  // these are more structured than scattered /proc which can store process ids, cmdline (boot params for kernel), cpuinfo, etc.
+  // block devices are random memory access in blocks
+  // dbus is an ipc
+  
+  // modules in /sys/modules are essentially dynamically linkable pieces of code that the kernel can use
+  // lsmod lists, modprobe adds and removes
+  // lspci, lscpu, cat /proc/meminfo
+
+    /*
+      guess_device_class()
+      unsigned long bitmask_btn[NBITS(BTN_MAX)];
+      "capabilites/key"
+      if test_bit(BTN_GAMEPAD, bitmask_btn))
+      */
     if (strcmp(device_property_val, "1") == 0) {
       
     }
@@ -310,6 +351,7 @@ int main(int argc, char *argv[])
   /*
      ASSUMING CONVENTIONAL GAMEPAD LAYOUT, i.e. certain buttons are analog/digital 
 
+      action-> BTN_NORTH/EAST/SOUTH/WEST
       dpads -> BTN_DPAD_UP/LEFT/RIGHT/DOWN
       sticks -> (ABS_X/ABS_Y/BTN_THUMBL), (ABS_RX/ABS_RY/BTN_THUMBR)
 
@@ -325,6 +367,8 @@ int main(int argc, char *argv[])
         absinfo.value = some_clamping_deadzone_here 
         negative values are left/up
       }
+
+      gives FF_RUMBLE if present? where should this be done?
   */
 
   device->fd = open(sys_path, O_RDONLY | O_NONBLOCK);
@@ -336,7 +380,8 @@ int main(int argc, char *argv[])
   struct input_event rumble_event;
   rumble_event.type = EV_FF;
   rumble_event.code = rumble_effect.id;
-  rumble_event.value = 3;
+  rumble_event.value = 3; // play three times
+  // EVIOCGEFFECTS
 
 
   udev_enumerate_unref(udev_enum);
@@ -348,6 +393,7 @@ int main(int argc, char *argv[])
   // that the series of sent events all belong together
   // look into this more if SDL2 adopts this
   struct input_events events[32];
+  // probably only need 4 events per frame
   int len = 0;
   for (item = list->first; item != NULL; item = list->next) {
     while (len = (read(item->fd, events, sizeof(events))) > 0) {
@@ -374,8 +420,8 @@ int main(int argc, char *argv[])
           case EV_ABS: {
             switch (events[i].code) {
               case ABS_X/ABS_Y: {
-                // could be mouse?
                 // events[i].value?
+                // once determined is a mouse, use ABS_MT_POSITION_X/Y
               } break;
             }
           } break;

@@ -10,3 +10,5 @@
 !ubuntu-app.c
 !ubuntu-build.bash
 !ubuntu-install-dependencies.bash
+
+!sound.c

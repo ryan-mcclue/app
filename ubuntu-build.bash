@@ -5,4 +5,4 @@
 [[ ! -d ubuntu-build ]] && mkdir ubuntu-build
 
 
-gcc -g ubuntu-app.c -o ubuntu-build/ubuntu-app -lX11 -ludev
+gcc -g ubuntu-app.c -o ubuntu-build/ubuntu-app -lX11 -ludev -lXrandr
