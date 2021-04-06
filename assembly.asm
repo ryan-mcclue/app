@@ -1,3 +1,11 @@
+;int *p = ...;
+;p += 5;
+;1. Simplify to whole expression (uintptr_t is just an address we can perform arithmetic operations on
+;p = (int *)((uintptr_t)p + 5 * sizeof(int))
+;2. Break into word sized sub expressions (or view as removing sub-expressions)
+;n = 5 << 2 (arithmetic shift here?)
+;p = (int *)((uintptr_t) + n)
+
 ; CISC and conditional branching
 ; system call is a way for us to call into the kernel
 ; x86-64 ABI spec by Intel describes system calls, namely where number and args should be put

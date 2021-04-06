@@ -101,25 +101,14 @@
 
 // can use gcc vector extensions to overload operator
 
-/*
-  int *p = ...;
-  p += 5;
-  1. Simplify to whole expression (uintptr_t is just an address we can perform arithmetic operations on
-  p = (int *)((uintptr_t)p + 5 * sizeof(int))
-  2. Break into word sized sub expressions (or view as removing sub-expressions)
-  n = 5 << 2 (arithmetic shift here?)
-  p = (int *)((uintptr_t) + n)
-   */
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
-// extensions to to the x11 protocol
 #include <X11/extensions/Xrandr.h>
-// https://stackoverflow.com/questions/37995551/discrepancy-between-command-line-xrandr-and-own-code/38222346#38222346
-// XRRScreenConfiguration *conf = XRRGetScreenInfo(dpy, root);
-// short refresh_rate = XRRConfigCurrentRate(conf);
-// The refresh rate depends on the resolution you are running at. So, maybe have to check this first
+// extensions to to the x11 protocol
+// The refresh rate depends on the resolution you are running at. 
+// So, maybe have to check this first
 // Depending on the version in use by server, functions will be different, e.g. xrandr 1.2
 
 // XRRScreenChangeNotifyEvent for resolution changes
@@ -180,12 +169,6 @@ align_pow2(uint val, uint align)
   return (val + (align - 1)) & mask;
 }
 
-// NOTE(Ryan): 715 = FUNC_PARAM_NOT_REFERENCED
-//lint -e{715}
-int main(int argc, char *argv[])
-{
-  // IMPORTANT(Ryan): This will read $DISPLAY 
-  
   // process is an execution environment. have pid and ppid (except for init)
   // will have stack, heap, data and text 'segments' in this environment
   // the act of creating a process is loading these segments into memory
@@ -209,24 +192,38 @@ int main(int argc, char *argv[])
   // What IPC will it use? (compare `ps -ef` and `ipcs -p`)
   // IPC and device drivers are integral to unix.
   // Can use unnamed pipes, named/fifo pipes, shared memory (most efficient as requires no syscalls)
-  
-  // server does all rendering, input etc. (would be in front of us)
-  // the client does all the logic
+
+int main(int argc, char *argv[])
+{
+  // NOTE(Ryan): Inspecting with ctags, concluded that will read from $DISPLAY if exists.
+  // NOTE(Ryan): Comparing PIDs with htop and $(ipcs -p), 
+  //             xlib will create a shared memory segment to use with xorg 
   Display *display = XOpenDisplay(NULL);
+  
   if (display == NULL) {
     // TODO(Ryan): Error logging
     DEBUGGER_BREAK();
   }
+  // iccm is a x protocol for x clients communicating with one another
+  // primarily used between window manager's and other x clients
+  // as such concerned with iccm window manager docs (and extended docs thereafter)
 
-  // want to minimise indirection and excessive parameters in documentation 
-  
+  // NOTE(Ryan): ICCM, other docs here... 
+  //             Minimise indirection and excessive parameters in documentation
   Window default_root_window = XDefaultRootWindow(display);
   int default_screen = XDefaultScreen(display);
 
+  // NOTE(Ryan): With htop -t, search for process to verify not leaking memory 
+  // TODO(Ryan): Why do there seem to be many forked processes? Why not threads?
+
   int screen_bit_depth = 24;
   XVisualInfo visual_info = {0};
-  // TrueColor means 24bits
-  if (XMatchVisualInfo(display, default_screen, screen_bit_depth, TrueColor, &visual_info) == 0) {
+  Status vis_info_status = XMatchVisualInfo(display, 
+                                            default_screen, 
+                                            screen_bit_depth,
+                                            TrueColor, 
+                                            &visual_info);
+  if (vis_info_status == 0) {
     // TODO(Ryan): Error logging
     DEBUGGER_BREAK();
   }
@@ -235,7 +232,7 @@ int main(int argc, char *argv[])
   int window_height = 720;
 
   XSetWindowAttributes window_attr = {0};
-  window_attr.background_pixel = 0;
+  window_attr.background_pixel = BlackPixel(display, default_screen);
   window_attr.bit_gravity = StaticGravity;
   window_attr.event_mask = StructureNotifyMask;
   unsigned long attribute_mask = CWBackPixel | CWEventMask | CWBitGravity;
