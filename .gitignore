@@ -11,4 +11,7 @@
 !ubuntu-build.bash
 !ubuntu-install-dependencies.bash
 
+!assembly.asm
+!assembly-linker.ld
+
 !sound.c

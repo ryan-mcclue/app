@@ -13,17 +13,23 @@
 // spec only relevent to the extent at which compilers implement them. so focus on what compilers do
 
 // specific registers used as function parameters? 
-// ABI is interface between two binary modules (often dictate stack alignment). OS determines ABI, which contains calling convention or compiler?
+// ABI is interface between two binary modules (often dictate stack alignment). 
+// So ABI for say Linux is what the program loader expects for binaries
+// OS determines ABI, which contains calling convention or compiler?
+
 // general purpose in that arithmetic/logical operations can be performed
-// however, some general purpose registers such as RBP have special properties when used with particular instructions, e.g. PUSH, POP
+// however, some general purpose registers such as RBP 
+// have special properties when used with particular instructions, e.g. PUSH, POP
 // consequently most only use RBP for this purpose
 
-// crt implementation determines actual entry point, e.g. _start(part of crt, typically crt0) -> main
-// how to crt creates the expected c standard state is architecture dependent
+// crt implementation determines actual entry point, 
+// e.g. _start(part of crt, typically crt0) -> main
+// how the crt creates the expected c standard state is architecture dependent
 // how it loads may be from interrupt, bootloader, os exec()
 
 // x86 borne from 8086 (16bit), hence why word is 16bits
-// other archs like MIPS, ARM borne out of 32bit, so word is 32bits for them (cpu vendor decides what word size means for their ISA)
+// other archs like MIPS, ARM borne out of 32bit, 
+// so word is 32bits for them (cpu vendor decides what word size means for their ISA)
 
 // intel and at&t differ in order, immediates and indexing 
 
@@ -39,20 +45,34 @@
 
 // stack grows down, heap (memory allocations) grows up
 
-// OS program loader handles memory allocation/loading/permissions based on binary sections. so is specific to a particular binary format, e.g. ELF?
-// text, data, rodata, bss (only allocates, doesn't load). how do heap/stack equate to these sections?
-// CPU MMU means with can write as if only program running
+// OS program loader handles memory allocation/loading/permissions
+// based on binary sections. so is specific to a particular binary format, e.g. ELF?
+// text, data, rodata, bss (only allocates, doesn't load). 
+// how do heap/stack equate to these sections?
+// CPU MMU means we can write as if only program running
 // MMU allocates memory in 4096bytes, known as pages (determined by hardware, so MMU is software in OS?)
 // page fault will go unnoticed by the program if it can be resolved? 
 // seg fault will be noticed trying to access memory with wrong permissions and outside of memory map?
 // TODO(difference between faults)
 // malloc() just increasing heap size
 
+  /*.bss (NOLOAD):
+  {
+    Must be aligned to 8 byte boundary as per arm procedure call standards  
+    . = ALIGN(8);
+    *(.bss*) 
+    . = ALIGN(8);
+  } > ram 
+  */
+
 // At a minimum, each instruction takes one cycle to load opcode, 2 cycles for 16 bit address?
 
-// Same architecture may have different registers for special features, e.g. Intel and AMD video decoding
+// Same architecture may have different registers for special features, 
+// e.g. Intel and AMD video decoding
 
-// x86 A-D, R8-R15 general purpose (AL/AH). special purpose (used in particular instructions, e.g. RSI/RDI source destination for fill) 
+// x86 A-D, R8-R15 general purpose (AL/AH). 
+// special purpose (used in particular instructions, 
+// e.g. RSI/RDI source destination for fill) 
 // control registers, RSP (last thing on stack), RIP (handled with stack), FLAGS
 
 // Intel (NASM)
@@ -81,6 +101,16 @@
 
 // can use gcc vector extensions to overload operator
 
+/*
+  int *p = ...;
+  p += 5;
+  1. Simplify to whole expression (uintptr_t is just an address we can perform arithmetic operations on
+  p = (int *)((uintptr_t)p + 5 * sizeof(int))
+  2. Break into word sized sub expressions (or view as removing sub-expressions)
+  n = 5 << 2 (arithmetic shift here?)
+  p = (int *)((uintptr_t) + n)
+   */
+
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -93,17 +123,22 @@
 // Depending on the version in use by server, functions will be different, e.g. xrandr 1.2
 
 // XRRScreenChangeNotifyEvent for resolution changes
+
+
 /*
-  XRRGetScreenSizeRange(dpy, root, &minWidth, &minHeight, &maxWidth, &maxHeight);
-  XRRScreenResources *res = XRRGetScreenResources(display, root);
+  #include <time.h>
 
-  for (int i = 0; i < output_info->nmodes; ++i) {
-    find_mode_by_xid();
-    XRRModeInfo *mode;
-  }
+  struct timespec now = {0};
 
-  xrandr for multiple monitor setups
+  why not CLOCK_PROCESS_CPUTIME_ID?
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  nanosleep()
+
+  u64 ticks = now.tv_sec;
+  ticks *= 1000000000; ?
+  ticks += now.tv_nsec;
 */
+
 
 #include <linux/input-event-codes.h>
 #include <libudev.h>
