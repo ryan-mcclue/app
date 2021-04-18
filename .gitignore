@@ -15,3 +15,4 @@
 !assembly-linker.ld
 
 !sound.c
+!startup.bash

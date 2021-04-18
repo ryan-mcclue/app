@@ -524,6 +524,7 @@ int main(int argc, char *argv[])
     DEBUGGER_BREAK();
   }
   // TODO(Ryan): Do we need to recalculate this under special circumstances, e.g. change in resolution, new monitor added?
+  // IMPORTANT(Ryan): This affects the bit depth used
   GC default_gc = DefaultGC(display, default_screen);
 
   //int page_size = getpagesize();
