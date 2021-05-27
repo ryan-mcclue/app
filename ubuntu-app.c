@@ -414,6 +414,7 @@ int main(int argc, char *argv[])
   rumble_event.code = rumble_effect.id;
   rumble_event.value = 3; // play three times
   // EVIOCGEFFECTS
+  // xnux.eu
 
 
   udev_enumerate_unref(udev_enum);
