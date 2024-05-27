@@ -1,17 +1,28 @@
 <!-- SPDX-License-Identifier: zlib-acknowledgement -->
-# Desktop 
-![Desktop Lint and Test](https://github.com/ryan-mcclue/desktop/actions/workflows/desktop.yml/badge.svg)
-Desktop application
+# App 
+![App Lint and Test](https://github.com/ryan-mcclue/app/actions/workflows/app.yml/badge.svg)
+
+Music visualiser app
 
 ## Linux
 ```
+# Build raylib dependency
+sudo apt install -y build-essential git cmake libasound2-dev libx11-dev libxrandr-dev \
+                    libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev \
+                    libxinerama-dev libwayland-dev libxkbcommon-dev
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON ../code/external/raylib-5.0/
+make -j$(getconf _NPROCESSORS_ONLN)
+
 # Optional if want release build
 mkdir private
 echo 'param_mode="release"' > private/build-params
 
+# Build and run tests
 bash misc/build "tests"
-./build/desktop-tests-debug
+./build/app-tests-debug
 
+# Build and run app
 bash misc/build "app"
-./build/desktop-debug
+./build/app-debug
 ```

@@ -39,11 +39,12 @@ int main(int argc, char *argv[])
 
   u32 screen_width = 1080;
   u32 screen_height = 720;
-  InitWindow(screen_width, screen_height, "app");
+  InitWindow(screen_width, screen_height, "Music Visualiser");
   SetTargetFPS(60);
 
   InitAudioDevice();
   Music music = LoadMusicStream("assets/billys-sacrifice.mp3");
+  // NOTE(Ryan): Must play initially to be able to resume
   PlayMusicStream(music);
   PauseMusicStream(music);
 

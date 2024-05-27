@@ -1,4 +1,4 @@
-name: desktop 
+name: app 
 run-name: ${{ github.actor }} run
 on: [push]
 
@@ -11,30 +11,18 @@ jobs:
       - name: Clone repo
         uses: actions/checkout@v4
       - name: Obtain deps
-        run: sudo apt -y install libcmocka-dev gcovr
-        # sudo apt install -y build-essential git cmake libasound2-dev libx11-dev libxrandr-dev \
-        #                     libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev \
-        #                     libxinerama-dev libwayland-dev libxkbcommon-dev \
-        #                     xvfb
-        # mkdir build && cd build
-        # cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON ../code/external/raylib-5.0/
-        # make -j$(getconf _NPROCESSORS_ONLN)
+        run: | 
+          sudo apt install -y build-essential git cmake libasound2-dev libx11-dev libxrandr-dev \
+                              libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev \
+                              libxinerama-dev libwayland-dev libxkbcommon-dev \
+                              xvfb
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON ../code/external/raylib-5.0/
+          make -j$(getconf _NPROCESSORS_ONLN)
       - name: Setup release build
         run: |
           mkdir private
           echo 'param_mode="release"' > private/build-params
-      - name: Build tests
-        run: bash misc/build "tests"
-      - name: Run tests
-        run: |
-          ./build/desktop-tests-release
-          # TODO(Ryan): Why gcov CI name files differently to local?
-          mv -f build/desktop-tests-release-desktop-tests.gcno build/desktop-tests.gcno
-          mv -f build/desktop-tests-release-desktop-tests.gcda build/desktop-tests.gcda
-          gcov -b -o build/ code/desktop-tests.cpp >/dev/null
-          gcovr -e "code/base/.*\.h" 
-      # TODO(Ryan): On embedded would typically flash release and then do HIL testing
-      # Output results to .xml file
       - name: Build app
         run: bash misc/build "app"
       - name: Run analyser

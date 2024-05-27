@@ -161,11 +161,11 @@ if [[ "$PARAM_SANITISE" == "true" ]]; then
 fi
 
 if [[ "$BUILD_TYPE" == "app" ]]; then
-  NAME="desktop"
+  NAME="app"
   BINARY_ARGS=("-decode" "i-12e")
   COMPILER_FLAGS+=( "-DTEST_BUILD=0" )
 else
-  NAME="desktop-tests"
+  NAME="app-tests"
   BINARY_ARGS=()
 
   # IMPORTANT(Ryan): For true coverage don't have optimisations, as may merge lines
