@@ -7,6 +7,27 @@
 
 #include <raylib.h>
 
+GLOBAL f32 global_samples[1024];
+GLOBAL f32 global_draw_samples[1024];
+GLOBAL u32 global_it;
+
+INTERNAL void 
+music_callback(void *buffer, unsigned int frames)
+{
+  // NOTE(Ryan): Raylib normalises to float stereo
+  f32 *norm_buf = (f32 *)buffer;
+  for (u32 i = 0; i < frames * 2; i += 2)
+  {
+    f32 left = norm_buf[i];
+    f32 right = norm_buf[i + 1];
+    f32 sample_avg = (left + right) / 2.0f;
+
+    if (global_it >= ARRAY_COUNT(global_samples)) global_it = 0;
+    global_samples[global_it++] = sample_avg;
+  }
+}
+
+
 #if TEST_BUILD
 int testable_main(int argc, char *argv[])
 #else
@@ -47,12 +68,16 @@ int main(int argc, char *argv[])
   // NOTE(Ryan): Must play initially to be able to resume
   PlayMusicStream(music);
   PauseMusicStream(music);
+  AttachAudioStreamProcessor(music.stream, music_callback);
+  //DetachAudioStreamProcessor(music.stream, music_callback);
 
   u64 frame_counter = 0;
   for (b32 quit = false; !quit; frame_counter += 1)
   {  
     BeginDrawing();
     ClearBackground(RAYWHITE);
+
+    f32 dt = GetFrameTime();
 
     UpdateMusicStream(music); 
 
@@ -62,8 +87,23 @@ int main(int argc, char *argv[])
       else ResumeMusicStream(music);
     }
 
-    // Measure string width for default font
-    DrawText("Congrats! You created your first window!", 190, 200, 20, LIGHTGRAY);
+    f32 max_draw_sample = f32_neg_inf();
+    for (u32 i = 0; i < ARRAY_COUNT(global_samples); i += 1)
+    {
+      global_draw_samples[i] += (global_samples[i] - global_draw_samples[i]) * dt;
+
+      if (global_draw_samples[i] > max_draw_sample) max_draw_sample = global_draw_samples[i];
+    }
+
+    // f32 bar_w = (f32)GetScreenWidth() / (f32)ARRAY_COUNT(global_samples);
+    f32 bar_w = 4.0f;
+    for (u32 i = 0; i < ARRAY_COUNT(global_samples); i += 1)
+    {
+      f32 t = global_draw_samples[i] / max_draw_sample;
+      f32 bar_h = t * (f32)GetScreenHeight();
+      Rectangle bar_rect = {i * bar_w, GetScreenHeight() - bar_h, bar_w, bar_h};
+      DrawRectangleRec(bar_rect, RED);
+    }
 
     EndDrawing();
 
