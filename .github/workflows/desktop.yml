@@ -1,0 +1,83 @@
+name: desktop 
+run-name: ${{ github.actor }} run
+on: [push]
+
+# Once build system stabilises, set up own docker image for speed
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ runner.os }}->${{ github.event_name }}->${{ github.ref }}"
+      - name: Clone repo
+        uses: actions/checkout@v4
+      - name: Obtain deps
+        run: sudo apt -y install libcmocka-dev gcovr
+        # sudo apt install -y build-essential git cmake libasound2-dev libx11-dev libxrandr-dev \
+        #                     libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev \
+        #                     libxinerama-dev libwayland-dev libxkbcommon-dev \
+        #                     xvfb
+        # mkdir build && cd build
+        # cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON ../code/external/raylib-5.0/
+        # make -j$(getconf _NPROCESSORS_ONLN)
+      - name: Setup release build
+        run: |
+          mkdir private
+          echo 'param_mode="release"' > private/build-params
+      - name: Build tests
+        run: bash misc/build "tests"
+      - name: Run tests
+        run: |
+          ./build/desktop-tests-release
+          # TODO(Ryan): Why gcov CI name files differently to local?
+          mv -f build/desktop-tests-release-desktop-tests.gcno build/desktop-tests.gcno
+          mv -f build/desktop-tests-release-desktop-tests.gcda build/desktop-tests.gcda
+          gcov -b -o build/ code/desktop-tests.cpp >/dev/null
+          gcovr -e "code/base/.*\.h" 
+      # TODO(Ryan): On embedded would typically flash release and then do HIL testing
+      # Output results to .xml file
+      - name: Build app
+        run: bash misc/build "app"
+      - name: Run analyser
+        run: |
+          echo 'param_analyse="true"' >> private/build-params
+          bash misc/build "app"
+      - name: Run sanitiser
+        run: |
+          echo 'param_mode="release"' > private/build-params
+          echo 'param_sanitise="true"' >> private/build-params
+          bash misc/build "app"
+          Xvfb :99 -screen 0 1080x720x24 -shmem &
+          export DISPLAY=:99.0
+          # NOTE(Ryan): Give time for xvfb
+          sleep 2
+          # NOTE(Ryan): Show leaks, but some 3rd party are unavoidable
+          LSAN_OPTIONS=suppressions=misc/supr.txt build/desktop-release || true
+# NOTE(Ryan): Upload, as CI means we always have a reliable binary to fallback on
+#     - name: Upload build folder
+#       uses: actions/upload-artifact@v3
+#       with:
+#         name: upload build
+#         path: build/desktop-release
+
+
+# macos:
+#   runs-on: macos-latest
+#   steps:
+#     - name: Clone repo
+#       uses: actions/checkout@v4
+#     - name: Build
+#       run: clang -o nob nob.c
+# ubuntu:
+#   strategy:
+#     matrix:
+#       cc: [gcc, clang]
+# windows:
+#   runs-on: windows-latest
+#   steps:
+#     - name: Clone repo
+#       uses: actions/checkout@v4
+#     - name: Build
+#       shell: cmd
+#       run: |
+#         call "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat"
+#         cl.exe -o nob.exe nob.c
