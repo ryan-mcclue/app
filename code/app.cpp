@@ -7,23 +7,32 @@
 
 #include <raylib.h>
 
-GLOBAL f32 global_samples[1024];
-GLOBAL f32 global_draw_samples[1024];
-GLOBAL u32 global_it;
+#define GLOBAL_SAMPLE_SIZE 512
+GLOBAL f32 global_samples_ping[GLOBAL_SAMPLE_SIZE];
+GLOBAL f32 global_samples_pong[GLOBAL_SAMPLE_SIZE];
+GLOBAL b32 global_callback_pinging;
+
+GLOBAL f32 global_draw_samples[GLOBAL_SAMPLE_SIZE];
+GLOBAL u32 global_frames_written;
 
 INTERNAL void 
 music_callback(void *buffer, unsigned int frames)
 {
+  global_frames_written = frames;
+
+  global_callback_pinging = !global_callback_pinging;
+
+  f32 *active_buf = global_callback_pinging ? global_samples_ping : global_samples_pong;
+
   // NOTE(Ryan): Raylib normalises to float stereo
   f32 *norm_buf = (f32 *)buffer;
-  for (u32 i = 0; i < frames * 2; i += 2)
+  for (u32 i = 0, j = 0; i < frames * 2 && i < GLOBAL_SAMPLE_SIZE; i += 2, j += 1)
   {
     f32 left = norm_buf[i];
     f32 right = norm_buf[i + 1];
     f32 sample_avg = (left + right) / 2.0f;
 
-    if (global_it >= ARRAY_COUNT(global_samples)) global_it = 0;
-    global_samples[global_it++] = sample_avg;
+    active_buf[j] = sample_avg;
   }
 }
 
@@ -36,7 +45,6 @@ int main(int argc, char *argv[])
 {
   global_debugger_present = linux_was_launched_by_gdb();
   MemArena *arena = mem_arena_allocate(GB(8), MB(64));
-  // MemArena *frame_arena = mem_arena_allocate(GB(8), MB(64));
 
   // String8List cmd_line = ZERO_STRUCT;
   // for (u32 i = 0; i < argc; i += 1)
@@ -65,12 +73,14 @@ int main(int argc, char *argv[])
 
   InitAudioDevice();
   Music music = LoadMusicStream("assets/billys-sacrifice.mp3");
+  //Music music = LoadMusicStream("assets/checking-manifest.mp3");
   // NOTE(Ryan): Must play initially to be able to resume
   PlayMusicStream(music);
   PauseMusicStream(music);
   AttachAudioStreamProcessor(music.stream, music_callback);
   //DetachAudioStreamProcessor(music.stream, music_callback);
 
+  MemArena *frame_arena = mem_arena_allocate(GB(1), MB(64));
   u64 frame_counter = 0;
   for (b32 quit = false; !quit; frame_counter += 1)
   {  
@@ -78,6 +88,11 @@ int main(int argc, char *argv[])
     ClearBackground(RAYWHITE);
 
     f32 dt = GetFrameTime();
+
+    //String8 s = u32_to_str8(frame_arena, global_frame_count);
+    //char text[10] = ZERO_STRUCT;
+    //str8_to_cstr(s, text, sizeof(text));
+    //DrawText(text, 50, 50, 48, RED);
 
     UpdateMusicStream(music); 
 
@@ -87,17 +102,18 @@ int main(int argc, char *argv[])
       else ResumeMusicStream(music);
     }
 
+    f32 *active_buf = global_callback_pinging ? global_samples_pong : global_samples_ping;
     f32 max_draw_sample = f32_neg_inf();
-    for (u32 i = 0; i < ARRAY_COUNT(global_samples); i += 1)
+    for (u32 i = 0; i < GLOBAL_SAMPLE_SIZE; i += 1)
     {
-      global_draw_samples[i] += (global_samples[i] - global_draw_samples[i]) * dt;
+      global_draw_samples[i] += (active_buf[i] - global_draw_samples[i]) * dt;
 
       if (global_draw_samples[i] > max_draw_sample) max_draw_sample = global_draw_samples[i];
     }
 
     // f32 bar_w = (f32)GetScreenWidth() / (f32)ARRAY_COUNT(global_samples);
     f32 bar_w = 4.0f;
-    for (u32 i = 0; i < ARRAY_COUNT(global_samples); i += 1)
+    for (s32 i = GLOBAL_SAMPLE_SIZE - 1; i >= 0; i -= 1)
     {
       f32 t = global_draw_samples[i] / max_draw_sample;
       f32 bar_h = t * (f32)GetScreenHeight();
@@ -111,6 +127,7 @@ int main(int argc, char *argv[])
     #if ASAN_ENABLED
       if (GetTime() >= 5.0) quit = true;
     #endif
+    mem_arena_clear(frame_arena);
   }
   CloseWindow();
 
