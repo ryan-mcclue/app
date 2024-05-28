@@ -7,6 +7,84 @@
 
 #include <raylib.h>
 
+
+        //size_t m = fft_analyze(GetFrameTime());
+
+// 1. convert samples from time to frequency domain
+// f32 in; (index is time)
+// f32 complex out; (so index is frequency; amplitude and phase of a frequency component)
+// (as both amp and phase, keep track of sin and cos; concisely with eulers complex formula)
+
+// display logarithmically as ear heres
+// (lower frequencies are more impactful)
+// hann window (smoothing?)
+
+// fft(in, 1, out, N);
+INTERNAL void 
+fft(f32 *in, u32 stride, f32z *out, u32 n)
+{
+  if (n == 1) 
+  {
+    out[0] = in[0];
+    return;
+  }
+
+  fft(in, stride*2, out, n/2);
+  fft(in + stride, stride*2, out + n/2, n/2);
+
+  for (u32 k = 0; k < n/2; ++k)
+  {
+    f32 t = (f32)k/n;
+    f32z v = f32z_exp(-f32z_I*F32_TAU*t) * out[k + n/2];
+    f32z e = out[k];
+    out[k] = e + v;
+    out[k + n/2] = e - v;
+  }
+}
+
+INTERNAL f32 
+ampz(f32z z)
+{
+  f32 a = fabsf(f32z_real(z));
+  f32 b = fabsf(f32z_imaginary(z));
+  if (a < b) return b;
+  else return a;
+}
+
+#if 0
+while() { 
+    fft(in, 1, out, N);
+
+    float max_amp = 0.0f;
+    for (size_t i = 0; i < N; ++i) {
+        float a = amp(out[i]);
+        if (max_amp < a) max_amp = a;
+    }
+
+    float step = 1.06;
+    size_t m = 0;
+    for (float f = 20.0f; (size_t) f < N; f *= step) {
+        m += 1;
+    }
+
+    float cell_width = (float)w/m;
+    m = 0;
+    for (float f = 20.0f; (size_t) f < N; f *= step) {
+        float f1 = f*step;
+        float a = 0.0f;
+        for (size_t q = (size_t) f; q < N && q < (size_t) f1; ++q) {
+            a += amp(out[q]);
+        }
+        a /= (size_t) f1 - (size_t) f + 1;
+        float t = a/max_amp;
+        DrawRectangle(m*cell_width, h/2 - h/2*t, cell_width, h/2*t, BLUE);
+        m += 1;
+    }
+}
+#endif
+
+
+
 #define GLOBAL_SAMPLE_SIZE 512
 GLOBAL f32 global_samples_ping[GLOBAL_SAMPLE_SIZE];
 GLOBAL f32 global_samples_pong[GLOBAL_SAMPLE_SIZE];
@@ -28,6 +106,7 @@ music_callback(void *buffer, unsigned int frames)
   f32 *norm_buf = (f32 *)buffer;
   for (u32 i = 0, j = 0; i < frames * 2 && i < GLOBAL_SAMPLE_SIZE; i += 2, j += 1)
   {
+    // TODO(Ryan): Use max() as downsampling
     f32 left = norm_buf[i];
     f32 right = norm_buf[i + 1];
     f32 sample_avg = (left + right) / 2.0f;
@@ -79,6 +158,10 @@ int main(int argc, char *argv[])
   PauseMusicStream(music);
   AttachAudioStreamProcessor(music.stream, music_callback);
   //DetachAudioStreamProcessor(music.stream, music_callback);
+  //  SetMusicVolume(plug->music, 0.5f);
+
+
+
 
   MemArena *frame_arena = mem_arena_allocate(GB(1), MB(64));
   u64 frame_counter = 0;
@@ -113,8 +196,10 @@ int main(int argc, char *argv[])
 
     // f32 bar_w = (f32)GetScreenWidth() / (f32)ARRAY_COUNT(global_samples);
     f32 bar_w = 4.0f;
-    for (s32 i = GLOBAL_SAMPLE_SIZE - 1; i >= 0; i -= 1)
+    for (u32 i = 0; i < GLOBAL_SAMPLE_SIZE; i += 1)
     {
+      // TODO(Ryan): If frames filled < GLOBAL_SAMPLE_SIZE, will be drawing zeroed bars
+      // that are not part of actual waveform
       f32 t = global_draw_samples[i] / max_draw_sample;
       f32 bar_h = t * (f32)GetScreenHeight();
       Rectangle bar_rect = {i * bar_w, GetScreenHeight() - bar_h, bar_w, bar_h};
