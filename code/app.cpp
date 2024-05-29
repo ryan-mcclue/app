@@ -7,8 +7,7 @@
 
 #include <raylib.h>
 
-
-        //size_t m = fft_analyze(GetFrameTime());
+// size_t m = fft_analyze(GetFrameTime());
 
 // 1. convert samples from time to frequency domain
 // f32 in; (index is time)
@@ -16,8 +15,31 @@
 // (as both amp and phase, keep track of sin and cos; concisely with eulers complex formula)
 
 // display logarithmically as ear heres
+// this will result in having to downsample frequency ranges (just take max?)
+
 // (lower frequencies are more impactful)
-// hann window (smoothing?)
+
+// if you have a 'real' signal with differing frequencies, e.g.
+// f = 3.12f, there will be jumps/tears in waveform when frequency changes
+// dft assumes signal is repeatable ad infinitum.
+// so, it will extrapolate phantom frequencies at tear points 
+// multiplying by hann window, i.e. 1Hz flipped cosine, smooths these tears
+// the cost is adding 1Hz signal, whose effect is neglible
+// the resultant frequency graph will be more tight, i.e. less spread out
+
+
+INTERNAL void
+hann()
+{
+  for (u32 i = 0; i < SAMPLES; i += 1)
+  {
+    f32 t = (f32)i/(SAMPLES - 1);
+
+    f32 hann = 0.5f - 0.5f * F32_COS(F32_TAU * t);
+
+    in[i] * hann
+  }
+}
 
 // fft(in, 1, out, N);
 INTERNAL void 
@@ -43,13 +65,17 @@ fft(f32 *in, u32 stride, f32z *out, u32 n)
 }
 
 INTERNAL f32 
-ampz(f32z z)
+powz(f32z z)
 {
-  f32 a = fabsf(f32z_real(z));
-  f32 b = fabsf(f32z_imaginary(z));
-  if (a < b) return b;
-  else return a;
+  // logarithmic compresses larger, expands smaller
+  // lower frequencies dominating, so log(amp)
+  f32 mag = f32z_mag(z);
+  f32 power = SQUARE(mag);
+  return F32_LN(power);
 }
+
+// as playing chiptune, getting square waves
+// a square wave is composed of many sine waves, so will see ramp 
 
 #if 0
 while() { 
@@ -67,12 +93,13 @@ while() {
         m += 1;
     }
 
+NOTE: only have to iterate over half as mirrored?
     float cell_width = (float)w/m;
     m = 0;
-    for (float f = 20.0f; (size_t) f < N; f *= step) {
+    for (float f = 20.0f; (size_t) f < N/2; f *= step) {
         float f1 = f*step;
         float a = 0.0f;
-        for (size_t q = (size_t) f; q < N && q < (size_t) f1; ++q) {
+        for (size_t q = (size_t) f; q < N/2 && q < (size_t) f1; ++q) {
             a += amp(out[q]);
         }
         a /= (size_t) f1 - (size_t) f + 1;
@@ -91,20 +118,19 @@ GLOBAL f32 global_samples_pong[GLOBAL_SAMPLE_SIZE];
 GLOBAL b32 global_callback_pinging;
 
 GLOBAL f32 global_draw_samples[GLOBAL_SAMPLE_SIZE];
-GLOBAL u32 global_frames_written;
 
 INTERNAL void 
 music_callback(void *buffer, unsigned int frames)
 {
-  global_frames_written = frames;
+  if (frames >= GLOBAL_SAMPLE_SIZE) frames = GLOBAL_SAMPLE_SIZE - 1;
 
   global_callback_pinging = !global_callback_pinging;
 
   f32 *active_buf = global_callback_pinging ? global_samples_ping : global_samples_pong;
 
-  // NOTE(Ryan): Raylib normalises to float stereo
+  // NOTE(Ryan): Raylib normalises to f32 stereo for all sources
   f32 *norm_buf = (f32 *)buffer;
-  for (u32 i = 0, j = 0; i < frames * 2 && i < GLOBAL_SAMPLE_SIZE; i += 2, j += 1)
+  for (u32 i = 0, j = 0; i < frames * 2; i += 2, j += 1)
   {
     // TODO(Ryan): Use max() as downsampling
     f32 left = norm_buf[i];
@@ -161,7 +187,13 @@ int main(int argc, char *argv[])
   //  SetMusicVolume(plug->music, 0.5f);
 
 
-
+  // Font font = LoadFontEx("./fonts/Alegreya-Regular.ttf", 69, NULL, 0);
+  //    Vector2 size = MeasureTextEx(plug->font, label, plug->font.baseSize, 0);
+  //    Vector2 position = {
+  //        w/2 - size.x/2,
+  //        h/2 - size.y/2,
+  //    };
+  //    DrawTextEx(plug->font, label, position, plug->font.baseSize, 0, color);
 
   MemArena *frame_arena = mem_arena_allocate(GB(1), MB(64));
   u64 frame_counter = 0;
@@ -198,7 +230,7 @@ int main(int argc, char *argv[])
     f32 bar_w = 4.0f;
     for (u32 i = 0; i < GLOBAL_SAMPLE_SIZE; i += 1)
     {
-      // TODO(Ryan): If frames filled < GLOBAL_SAMPLE_SIZE, will be drawing zeroed bars
+      // TODO(Ryan): If frames < GLOBAL_SAMPLE_SIZE, will be drawing zeroed bars
       // that are not part of actual waveform
       f32 t = global_draw_samples[i] / max_draw_sample;
       f32 bar_h = t * (f32)GetScreenHeight();
