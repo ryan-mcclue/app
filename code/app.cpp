@@ -28,20 +28,14 @@
 // the resultant frequency graph will be more tight, i.e. less spread out
 
 
-INTERNAL void
-hann()
+
+INTERNAL f32
+hann_function(f32 sample, f32 t)
 {
-  for (u32 i = 0; i < SAMPLES; i += 1)
-  {
-    f32 t = (f32)i/(SAMPLES - 1);
-
-    f32 hann = 0.5f - 0.5f * F32_COS(F32_TAU * t);
-
-    in[i] * hann
-  }
+  f32 h = 0.5f - 0.5f * F32_COS(F32_TAU * t);
+  return sample * h;
 }
 
-// fft(in, 1, out, N);
 INTERNAL void 
 fft(f32 *in, u32 stride, f32z *out, u32 n)
 {
@@ -65,13 +59,11 @@ fft(f32 *in, u32 stride, f32z *out, u32 n)
 }
 
 INTERNAL f32 
-powz(f32z z)
+f32z_power(f32z z)
 {
-  // logarithmic compresses larger, expands smaller
-  // lower frequencies dominating, so log(amp)
   f32 mag = f32z_mag(z);
   f32 power = SQUARE(mag);
-  return F32_LN(power);
+  return power;
 }
 
 // as playing chiptune, getting square waves
@@ -112,35 +104,47 @@ NOTE: only have to iterate over half as mirrored?
 
 
 
-#define GLOBAL_SAMPLE_SIZE 512
-GLOBAL f32 global_samples_ping[GLOBAL_SAMPLE_SIZE];
-GLOBAL f32 global_samples_pong[GLOBAL_SAMPLE_SIZE];
-GLOBAL b32 global_callback_pinging;
+#define NUM_SAMPLES 512 
+STATIC_ASSERT(IS_POW2(NUM_SAMPLES));
 
-GLOBAL f32 global_draw_samples[GLOBAL_SAMPLE_SIZE];
+struct SampleBuffer
+{
+  f32 samples[NUM_SAMPLES];
+  u32 head;
+};
+GLOBAL SampleBuffer global_sample_buffer;
 
 INTERNAL void 
 music_callback(void *buffer, unsigned int frames)
 {
-  if (frames >= GLOBAL_SAMPLE_SIZE) frames = GLOBAL_SAMPLE_SIZE - 1;
-
-  global_callback_pinging = !global_callback_pinging;
-
-  f32 *active_buf = global_callback_pinging ? global_samples_ping : global_samples_pong;
+  // NOTE(Ryan): Don't overwrite buffer on this run
+  if (frames >= NUM_SAMPLES) frames = NUM_SAMPLES - 1;
 
   // NOTE(Ryan): Raylib normalises to f32 stereo for all sources
   f32 *norm_buf = (f32 *)buffer;
-  for (u32 i = 0, j = 0; i < frames * 2; i += 2, j += 1)
+  for (u32 i = 0; i < frames * 2; i += 2)
   {
-    // TODO(Ryan): Use max() as downsampling
     f32 left = norm_buf[i];
     f32 right = norm_buf[i + 1];
-    f32 sample_avg = (left + right) / 2.0f;
 
-    active_buf[j] = sample_avg;
+    global_sample_buffer.samples[global_sample_buffer.head] = MAX(left, right);
+    global_sample_buffer.head = (global_sample_buffer.head + 1) % NUM_SAMPLES;
   }
 }
 
+#define DRAW_U32(var) do {\
+  String8 s = str8_fmt(frame_arena, STRINGIFY(var) " = %" PRIu32, var); \
+  char text[64] = ZERO_STRUCT; \
+  str8_to_cstr(s, text, sizeof(text)); \
+  DrawText(text, 50, 50, 48, RED); \
+} while (0)
+
+#define DRAW_F32(var) do {\
+  String8 s = str8_fmt(frame_arena, STRINGIFY(var) " = %f", var); \
+  char text[64] = ZERO_STRUCT; \
+  str8_to_cstr(s, text, sizeof(text)); \
+  DrawText(text, 50, 50, 48, RED); \
+} while (0)
 
 #if TEST_BUILD
 int testable_main(int argc, char *argv[])
@@ -195,6 +199,11 @@ int main(int argc, char *argv[])
   //    };
   //    DrawTextEx(plug->font, label, position, plug->font.baseSize, 0, color);
 
+
+  f32 hann_samples[NUM_SAMPLES] = ZERO_STRUCT;
+  f32z fft_samples[NUM_SAMPLES] = ZERO_STRUCT;
+  f32 draw_samples[NUM_SAMPLES] = ZERO_STRUCT;
+
   MemArena *frame_arena = mem_arena_allocate(GB(1), MB(64));
   u64 frame_counter = 0;
   for (b32 quit = false; !quit; frame_counter += 1)
@@ -204,11 +213,6 @@ int main(int argc, char *argv[])
 
     f32 dt = GetFrameTime();
 
-    //String8 s = u32_to_str8(frame_arena, global_frame_count);
-    //char text[10] = ZERO_STRUCT;
-    //str8_to_cstr(s, text, sizeof(text));
-    //DrawText(text, 50, 50, 48, RED);
-
     UpdateMusicStream(music); 
 
     if (IsKeyPressed(KEY_P))
@@ -217,26 +221,43 @@ int main(int argc, char *argv[])
       else ResumeMusicStream(music);
     }
 
-    f32 *active_buf = global_callback_pinging ? global_samples_pong : global_samples_ping;
-    f32 max_draw_sample = f32_neg_inf();
-    for (u32 i = 0; i < GLOBAL_SAMPLE_SIZE; i += 1)
+    for (u32 i = 0, j = global_sample_buffer.head; 
+         i < NUM_SAMPLES; 
+         i += 1, j = (j - 1) % NUM_SAMPLES)
     {
-      global_draw_samples[i] += (active_buf[i] - global_draw_samples[i]) * dt;
-
-      if (global_draw_samples[i] > max_draw_sample) max_draw_sample = global_draw_samples[i];
+      // we are multiplying by 1Hz, so shifting frequencies.
+      // so, only want to do this if playing
+      f32 t = (f32)i/(NUM_SAMPLES - 1);
+      hann_samples[i] = hann_function(global_sample_buffer.samples[j], t);
     }
 
-    // f32 bar_w = (f32)GetScreenWidth() / (f32)ARRAY_COUNT(global_samples);
-    f32 bar_w = 4.0f;
-    for (u32 i = 0; i < GLOBAL_SAMPLE_SIZE; i += 1)
+    fft(hann_samples, 1, fft_samples, NUM_SAMPLES);
+
+    f32 max_power = 0.0f;
+    // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
+    for (u32 i = 0; i < NUM_SAMPLES / 2; i += 1)
     {
-      // TODO(Ryan): If frames < GLOBAL_SAMPLE_SIZE, will be drawing zeroed bars
-      // that are not part of actual waveform
-      f32 t = global_draw_samples[i] / max_draw_sample;
-      f32 bar_h = t * (f32)GetScreenHeight();
-      Rectangle bar_rect = {i * bar_w, GetScreenHeight() - bar_h, bar_w, bar_h};
+      // logarithmic compresses larger values, expands smaller values
+      // lower frequencies dominating, so F32_LN(power)
+      f32 power = f32z_power(fft_samples[i]);
+      if (power > max_power) max_power = power;
+    }
+
+    f32 bar_w = GetScreenWidth() / (NUM_SAMPLES / 2);
+    for (u32 i = 0; i < (NUM_SAMPLES / 2); i += 1)
+    {
+      f32 power = f32z_power(fft_samples[i]);
+      f32 t = power / max_power;
+      f32 target_bar_h = t * (f32)GetScreenHeight();
+
+      //draw_samples[i] += (target_bar_h - draw_samples[i]) * dt;
+      //f32 bar_h = draw_samples[i];
+
+      Rectangle bar_rect = {i * bar_w, GetScreenHeight() - target_bar_h, bar_w, target_bar_h};
+
       DrawRectangleRec(bar_rect, RED);
     }
+
 
     EndDrawing();
 
