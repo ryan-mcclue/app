@@ -171,7 +171,8 @@ else
   # IMPORTANT(Ryan): For true coverage don't have optimisations, as may merge lines
   # --coverage to generate .gcno
   # running generate .gcda
-  COMPILER_FLAGS+=( "-DTEST_BUILD=1" "--coverage" )
+  #COMPILER_FLAGS+=( "-DTEST_BUILD=1" "--coverage" )
+  COMPILER_FLAGS+=( "-DTEST_BUILD=1" )
   LINKER_FLAGS+=( "-lcmocka" )
 fi
 
@@ -253,20 +254,20 @@ print_end_time
 
 if [[ "$PARAM_RUN" == "true" ]]; then
   # NOTE(Ryan): gcov gives profiler error if overriding file
-  rm -f build/"$BINARY_NAME".gcda 2>/dev/null
+  #rm -f build/"$BINARY_NAME".gcda 2>/dev/null
 
   # NOTE(Ryan): Remove ascii colour escape sequences for Vim quickfix window
   build/"$BINARY_NAME" ${BINARY_ARGS[@]} | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g"
 
   # NOTE(Ryan): gcov requires name to be same as source file
-  mv -f build/"$BINARY_NAME".gcno build/"$NAME".gcno 2>/dev/null
-  mv -f build/"$BINARY_NAME".gcda build/"$NAME".gcda 2>/dev/null
+  #mv -f build/"$BINARY_NAME".gcno build/"$NAME".gcno 2>/dev/null
+  #mv -f build/"$BINARY_NAME".gcda build/"$NAME".gcda 2>/dev/null
 
-  if [[ "$BUILD_TYPE" == "tests" ]]; then
-    gcov -b -o build/ code/"$NAME".cpp >/dev/null
-    gcovr -e "code/base/.*\.h" 
-    rm -f *.gcov
-  fi
+  #if [[ "$BUILD_TYPE" == "tests" ]]; then
+  #  gcov -b -o build/ code/"$NAME".cpp >/dev/null
+  #  gcovr -e "code/base/.*\.h" 
+  #  rm -f *.gcov
+  #fi
 fi
 
 # insert_metrics_db

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: zlib-acknowledgement
-#if !defined(TEST_BUILD)
+#if !TEST_BUILD
 #define PROFILER 1
 #endif
 
@@ -26,7 +26,6 @@
 // the resultant frequency graph will be more tight, i.e. less spread out
 
 
-
 INTERNAL f32
 hann_function(f32 sample, f32 t)
 {
@@ -34,6 +33,8 @@ hann_function(f32 sample, f32 t)
   return sample * h;
 }
 
+// NOTE(Ryan): Modified from https://rosettacode.org/wiki/Fast_Fourier_transform#Python
+// cooley-tukey algorithm O(nlogn) for pow2
 INTERNAL void 
 fft(f32 *in, u32 stride, f32z *out, u32 n)
 {
@@ -55,6 +56,20 @@ fft(f32 *in, u32 stride, f32z *out, u32 n)
     out[k + n/2] = e - v;
   }
 }
+
+// post: pop off reverse preorder
+
+#if 0
+INTERNAL f32z *
+fft_it(MemArena *arena, f32 *in, u32 n)
+{
+  f32z *out = MEM_ARENA_PUSH_ARRAY(arena, f32z, n);
+  MemArenaTemp t = mem_arena_temp_begin(&arena, 1);
+
+  mem_arena_temp_end(t);
+}
+#endif
+
 
 INTERNAL f32 
 f32z_power(f32z z)
@@ -144,6 +159,8 @@ int main(int argc, char *argv[])
 
   profiler_init();
 
+  SetTraceLogLevel(LOG_ERROR); 
+
   u32 screen_width = 1080;
   u32 screen_height = 720;
   InitWindow(screen_width, screen_height, "Music Visualiser");
@@ -199,7 +216,10 @@ int main(int argc, char *argv[])
       hann_samples[i] = hann_function(global_sample_buffer.samples[j], t);
     }
 
-    fft(hann_samples, 1, fft_samples, NUM_SAMPLES);
+    PROFILE_BANDWIDTH("fft", NUM_SAMPLES * sizeof(f32))
+    {
+      fft(hann_samples, 1, fft_samples, NUM_SAMPLES);
+    }
 
     f32 max_power = 1.0f;
     // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
@@ -235,6 +255,15 @@ int main(int argc, char *argv[])
 
       Rectangle bar_rect = {j * bin_w, GetRenderHeight() - bin_h, bin_w, bin_h};
 
+      // menu to select:
+      //   - rainbow
+      //   - circles
+      //   - audio source, e.g. microphone, OS mixer etc.  
+      //   - comments for vis. suggestions: https://www.youtube.com/watch?v=1pqIg-Ug7bU&list=PLpM-Dvs8t0Vak1rrE2NJn8XYEJ5M7-BqT&index=7&t=669s 
+      
+      // want to blend colours
+      // f32 hue = (f32)j / num_bins;
+      // Color c = ColorFromHSV(360 * hue, 1.0f, 1.0f);
       DrawRectangleRec(bar_rect, RED);
 
       j += 1;
