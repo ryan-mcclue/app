@@ -7,8 +7,6 @@
 
 #include <raylib.h>
 
-// size_t m = fft_analyze(GetFrameTime());
-
 // 1. convert samples from time to frequency domain
 // f32 in; (index is time)
 // f32 complex out; (so index is frequency; amplitude and phase of a frequency component)
@@ -63,49 +61,20 @@ f32z_power(f32z z)
 {
   f32 mag = f32z_mag(z);
   f32 power = SQUARE(mag);
-  return power;
+  // logarithmic compresses larger values, expands smaller values
+  // lower frequencies dominating, so F32_LN(power)
+  return F32_LN(power);
 }
 
 // as playing chiptune, getting square waves
 // a square wave is composed of many sine waves, so will see ramp 
 
-#if 0
-while() { 
-    fft(in, 1, out, N);
-
-    float max_amp = 0.0f;
-    for (size_t i = 0; i < N; ++i) {
-        float a = amp(out[i]);
-        if (max_amp < a) max_amp = a;
-    }
-
-    float step = 1.06;
-    size_t m = 0;
-    for (float f = 20.0f; (size_t) f < N; f *= step) {
-        m += 1;
-    }
-
-NOTE: only have to iterate over half as mirrored?
-    float cell_width = (float)w/m;
-    m = 0;
-    for (float f = 20.0f; (size_t) f < N/2; f *= step) {
-        float f1 = f*step;
-        float a = 0.0f;
-        for (size_t q = (size_t) f; q < N/2 && q < (size_t) f1; ++q) {
-            a += amp(out[q]);
-        }
-        a /= (size_t) f1 - (size_t) f + 1;
-        float t = a/max_amp;
-        DrawRectangle(m*cell_width, h/2 - h/2*t, cell_width, h/2*t, BLUE);
-        m += 1;
-    }
-}
-#endif
-
-
-
-#define NUM_SAMPLES 512 
+// IMPORTANT(Ryan): The number of samples limits number of frequencies we can derive
+// This seems to be a good number for a decent visualisation
+// Also, as displaying logarithmically, we don't actually have this large number
+#define NUM_SAMPLES (1 << 13) 
 STATIC_ASSERT(IS_POW2(NUM_SAMPLES));
+#define HALF_SAMPLES (NUM_SAMPLES / 2)
 
 struct SampleBuffer
 {
@@ -202,7 +171,7 @@ int main(int argc, char *argv[])
 
   f32 hann_samples[NUM_SAMPLES] = ZERO_STRUCT;
   f32z fft_samples[NUM_SAMPLES] = ZERO_STRUCT;
-  f32 draw_samples[NUM_SAMPLES] = ZERO_STRUCT;
+  f32 draw_samples[HALF_SAMPLES] = ZERO_STRUCT;
 
   MemArena *frame_arena = mem_arena_allocate(GB(1), MB(64));
   u64 frame_counter = 0;
@@ -226,38 +195,50 @@ int main(int argc, char *argv[])
          i += 1, j = (j - 1) % NUM_SAMPLES)
     {
       // we are multiplying by 1Hz, so shifting frequencies.
-      // so, only want to do this if playing
       f32 t = (f32)i/(NUM_SAMPLES - 1);
       hann_samples[i] = hann_function(global_sample_buffer.samples[j], t);
     }
 
     fft(hann_samples, 1, fft_samples, NUM_SAMPLES);
 
-    f32 max_power = 0.0f;
+    f32 max_power = 1.0f;
     // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
-    for (u32 i = 0; i < NUM_SAMPLES / 2; i += 1)
+    for (u32 i = 0; i < HALF_SAMPLES; i += 1)
     {
-      // logarithmic compresses larger values, expands smaller values
-      // lower frequencies dominating, so F32_LN(power)
       f32 power = f32z_power(fft_samples[i]);
       if (power > max_power) max_power = power;
     }
 
-    f32 bar_w = GetScreenWidth() / (NUM_SAMPLES / 2);
-    for (u32 i = 0; i < (NUM_SAMPLES / 2); i += 1)
+    u32 num_bins = 0;
+    for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
     {
-      f32 power = f32z_power(fft_samples[i]);
-      f32 t = power / max_power;
-      f32 target_bar_h = t * (f32)GetScreenHeight();
-
-      //draw_samples[i] += (target_bar_h - draw_samples[i]) * dt;
-      //f32 bar_h = draw_samples[i];
-
-      Rectangle bar_rect = {i * bar_w, GetScreenHeight() - target_bar_h, bar_w, target_bar_h};
-
-      DrawRectangleRec(bar_rect, RED);
+      num_bins += 1; 
     }
 
+    f32 bin_w = GetRenderWidth() / num_bins;
+    u32 j = 0;
+    for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
+    {
+      f32 next_f = F32_CEIL(f * 1.06f);
+      f32 bin_power = 0.0f;
+      for (u32 i = (u32)f; i < HALF_SAMPLES && i < (u32)next_f; i += 1)
+      {
+        f32 p = f32z_power(fft_samples[i]); 
+        if (p > bin_power) bin_power = p;
+      }
+
+      // division by zero in float gives -nan
+      f32 target_t = bin_power / max_power;
+      draw_samples[j] += (target_t - draw_samples[j]) * 8 * dt;
+
+      f32 bin_h = draw_samples[j] * GetRenderHeight();
+
+      Rectangle bar_rect = {j * bin_w, GetRenderHeight() - bin_h, bin_w, bin_h};
+
+      DrawRectangleRec(bar_rect, RED);
+
+      j += 1;
+    }
 
     EndDrawing();
 
