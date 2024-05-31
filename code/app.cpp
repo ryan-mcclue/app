@@ -4,8 +4,10 @@
 #endif
 
 #include "base/base-inc.h"
-
 #include <raylib.h>
+
+#include "app.h"
+
 
 // TODO:
       // menu to select:
@@ -38,6 +40,9 @@
 
 // 1. draw visualisation
 // 2. segment screen with region visualisation
+
+// 1. scope variables
+// 2. merge into state struct with arenas and .h file
 
 INTERNAL f32
 hann_function(f32 sample, f32 t)
@@ -97,19 +102,64 @@ f32z_power(f32z z)
 // as playing chiptune, getting square waves
 // a square wave is composed of many sine waves, so will see ramp 
 
-// IMPORTANT(Ryan): The number of samples limits number of frequencies we can derive
-// This seems to be a good number for a decent visualisation
-// Also, as displaying logarithmically, we don't actually have this large number
-#define NUM_SAMPLES (1 << 13) 
-STATIC_ASSERT(IS_POW2(NUM_SAMPLES));
-#define HALF_SAMPLES (NUM_SAMPLES / 2)
-
-struct SampleBuffer
+#if 0
+INTERNAL MusicFile *
+alloc_mf()
 {
-  f32 samples[NUM_SAMPLES];
-  u32 head;
-};
-GLOBAL SampleBuffer global_sample_buffer;
+  MusicFile *mf = NULL;
+  if (g_state->first_free_mf != NULL)
+  {
+    mf = g_state->first_free_mf;
+    g_state->first_free_mf = g_state->first_free_mf->next;
+  }
+  else
+  {
+    mf = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->arena, MusicFile);
+  }
+  mf->gen++;
+
+  return mf;
+}
+
+INTERNAL void
+dealloc_mf(MusicFile *mf)
+{
+  DLL_REMOVE(g_state->first_mf, g_state->last_mf, mf);
+  mf->next = g_state->first_free_mf;
+  mf->prev = NULL;
+  g_state->first_free_mf = mf;
+  mf->gen++;
+}
+#endif
+
+INTERNAL Handle 
+handle_from_mf(MusicFile *mf)
+{
+  Handle handle = ZERO_STRUCT;
+  if (mf != NULL)
+  {
+    handle.addr = mf;
+    handle.gen = mf->gen;
+  }
+  return handle;
+}
+
+INTERNAL MusicFile *
+mf_from_handle(Handle handle)
+{
+  MusicFile *result = (MusicFile *)handle.addr;
+  if (result == NULL || handle.gen != result->gen)
+  {
+    result = &g_zero_mf;
+  }
+  return result;
+}
+
+INTERNAL b32
+mf_is_zero(MusicFile *mf)
+{
+  return mf == &g_zero_mf;
+}
 
 INTERNAL void 
 music_callback(void *buffer, unsigned int frames)
@@ -124,20 +174,20 @@ music_callback(void *buffer, unsigned int frames)
     f32 left = norm_buf[i];
     f32 right = norm_buf[i + 1];
 
-    global_sample_buffer.samples[global_sample_buffer.head] = MAX(left, right);
-    global_sample_buffer.head = (global_sample_buffer.head + 1) % NUM_SAMPLES;
+    g_state->samples_ring.samples[g_state->samples_ring.head] = MAX(left, right);
+    g_state->samples_ring.head = (g_state->samples_ring.head + 1) % NUM_SAMPLES;
   }
 }
 
 #define DRAW_U32(var) do {\
-  String8 s = str8_fmt(frame_arena, STRINGIFY(var) " = %" PRIu32, var); \
+  String8 s = str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu32, var); \
   char text[64] = ZERO_STRUCT; \
   str8_to_cstr(s, text, sizeof(text)); \
   DrawText(text, 50, 50, 48, RED); \
 } while (0)
 
 #define DRAW_F32(var) do {\
-  String8 s = str8_fmt(frame_arena, STRINGIFY(var) " = %f", var); \
+  String8 s = str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %f", var); \
   char text[64] = ZERO_STRUCT; \
   str8_to_cstr(s, text, sizeof(text)); \
   DrawText(text, 50, 50, 48, RED); \
@@ -162,6 +212,68 @@ fft_render(Rectangle r, f32 *samples, u32 num_samples)
     f32 hue = (f32)i / num_samples;
     Color c = ColorFromHSV(360 * hue, 1.0f, 1.0f);
     DrawRectangleRec(bin_rect, c);
+
+    // float thick = cell_width/3*sqrtf(t);
+    // DrawLineEx(startPos, endPos, thick, color);
+  }
+}
+
+INTERNAL Color
+lerp_color(Color *a, Color *b, f32 t)
+{
+  Color res = {
+    (u8)f32_lerp(a->r, b->r, t),
+    (u8)f32_lerp(a->g, b->g, t),
+    (u8)f32_lerp(a->b, b->b, t),
+    (u8)f32_lerp(a->a, b->a, t),
+  };
+
+  return res;
+}
+
+INTERNAL void
+mf_render(Rectangle r)
+{
+  DrawRectangleRec(r, DARKGRAY);
+  f32 mf_dim = r.height * 0.7f;
+  f32 mf_margin = r.height * 0.1f; 
+  f32 mf_width = mf_dim;
+  f32 mf_height = mf_width;
+  u32 i = 0;
+
+  MusicFile *active_mf = mf_from_handle(g_state->active_mf_handle);
+  for (MusicFile *mf = g_state->first_mf;
+       mf != NULL; mf = mf->next)
+  {
+    Rectangle mf_rec = {r.x + mf_margin + i * (mf_margin + mf_width), 
+                        r.y + mf_margin, 
+                        mf_width, 
+                        mf_height};
+    Color mf_color = YELLOW;
+    
+    if (mf == active_mf)
+    {
+      mf_color = PURPLE;
+    }
+    if (CheckCollisionPointRec(GetMousePosition(), mf_rec))
+    {
+      mf_color = GREEN;
+      if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+      {
+        if (!mf_is_zero(active_mf))
+        {
+          StopMusicStream(active_mf->music);
+          DetachAudioStreamProcessor(active_mf->music.stream, music_callback);
+        }
+        AttachAudioStreamProcessor(mf->music.stream, music_callback);
+        SetMusicVolume(mf->music, 0.5f);
+        PlayMusicStream(mf->music);
+        g_state->active_mf_handle = handle_from_mf(mf);
+      }
+    }
+    DrawRectangleRec(mf_rec, mf_color);
+
+    i += 1;
   }
 }
 
@@ -203,39 +315,30 @@ int main(int argc, char *argv[])
   SetTargetFPS(60);
 
   InitAudioDevice();
-  Music music = LoadMusicStream("assets/billys-sacrifice.mp3");
-  //Music music = LoadMusicStream("assets/checking-manifest.mp3");
-  // NOTE(Ryan): Must play initially to be able to resume
-  PlayMusicStream(music);
-  PauseMusicStream(music);
-  AttachAudioStreamProcessor(music.stream, music_callback);
-  //DetachAudioStreamProcessor(music.stream, music_callback);
-  //  SetMusicVolume(plug->music, 0.5f);
+  
+  // fc-list
+  Font font = LoadFontEx("assets/Lato-Medium.ttf", 64, NULL, 0);
 
+  g_state = MEM_ARENA_PUSH_STRUCT_ZERO(arena, State);
+  g_state->arena = arena;
+  g_state->frame_arena = mem_arena_allocate(GB(1), MB(64));
 
-  // Font font = LoadFontEx("./fonts/Alegreya-Regular.ttf", 69, NULL, 0);
-  //    Vector2 size = MeasureTextEx(plug->font, label, plug->font.baseSize, 0);
-  //    Vector2 position = {
-  //        w/2 - size.x/2,
-  //        h/2 - size.y/2,
-  //    };
-  //    DrawTextEx(plug->font, label, position, plug->font.baseSize, 0, color);
+  for (u32 i = 0; i < MUSIC_FILE_POOL_SIZE; i += 1)
+  {
+     MusicFileIndex *mf_idx = &g_state->mf_idx_pool[i]; 
+     mf_idx->index = i;
+     SLL_STACK_PUSH(g_state->first_free_mf_idx, mf_idx);
+  }
 
-
-  f32 hann_samples[NUM_SAMPLES] = ZERO_STRUCT;
-  f32z fft_samples[NUM_SAMPLES] = ZERO_STRUCT;
-  f32 draw_samples[HALF_SAMPLES] = ZERO_STRUCT;
-
-  MemArena *frame_arena = mem_arena_allocate(GB(1), MB(64));
-  u64 frame_counter = 0;
-  for (b32 quit = false; !quit; frame_counter += 1)
+  for (b32 quit = false; !quit; g_state->frame_counter += 1)
   {  
     BeginDrawing();
-    ClearBackground(RAYWHITE);
+    ClearBackground(BLACK);
 
     f32 dt = GetFrameTime();
-
-    UpdateMusicStream(music); 
+    u32 rw = GetRenderWidth();
+    u32 rh = GetRenderHeight();
+    f32 font_size = rh / 8;
 
     if (IsKeyPressed(KEY_F)) 
     {
@@ -243,60 +346,183 @@ int main(int argc, char *argv[])
       else MaximizeWindow();
     }
 
-    if (IsKeyPressed(KEY_P))
+    Vector2 mouse_delta = GetMouseDelta();
+    if (mouse_delta.x > 0.0f || mouse_delta.y > 0.0f)
     {
-      if (IsMusicStreamPlaying(music)) PauseMusicStream(music);
-      else ResumeMusicStream(music);
+      g_state->mouse_last_moved_counter = GetTime();
     }
 
-    for (u32 i = 0, j = global_sample_buffer.head; 
-         i < NUM_SAMPLES; 
-         i += 1, j = (j - 1) % NUM_SAMPLES)
+    if (IsFileDropped())
     {
-      // we are multiplying by 1Hz, so shifting frequencies.
-      f32 t = (f32)i/(NUM_SAMPLES - 1);
-      hann_samples[i] = hann_function(global_sample_buffer.samples[j], t);
-    }
-
-    PROFILE_BANDWIDTH("fft", NUM_SAMPLES * sizeof(f32))
-    {
-      fft(hann_samples, 1, fft_samples, NUM_SAMPLES);
-    }
-
-    f32 max_power = 1.0f;
-    // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
-    for (u32 i = 0; i < HALF_SAMPLES; i += 1)
-    {
-      f32 power = f32z_power(fft_samples[i]);
-      if (power > max_power) max_power = power;
-    }
-
-    u32 num_bins = 0;
-    for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
-    {
-      num_bins += 1; 
-    }
-
-    u32 j = 0;
-    for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
-    {
-      f32 next_f = F32_CEIL(f * 1.06f);
-      f32 bin_power = 0.0f;
-      for (u32 i = (u32)f; i < HALF_SAMPLES && i < (u32)next_f; i += 1)
+      FilePathList dropped_files = LoadDroppedFiles();
+      for (u32 i = 0; i < dropped_files.count; i += 1)
       {
-        f32 p = f32z_power(fft_samples[i]); 
-        if (p > bin_power) bin_power = p;
+        MusicFileIndex *mf_idx = g_state->first_free_mf_idx;
+        if (mf_idx != NULL)
+        {
+          MusicFile *mf = &g_state->mf_pool[mf_idx->index];
+          char *path = dropped_files.paths[i];
+          mf->music = LoadMusicStream(path);
+          if (!IsMusicReady(mf->music))
+          {
+            // TODO: display as popup 
+            TraceLog(LOG_ERROR, "Can't load music file %s\n", path);
+          }
+          else
+          {
+            SLL_STACK_POP(g_state->first_free_mf_idx);
+            SLL_QUEUE_PUSH(g_state->first_mf, g_state->last_mf, mf);
+            mf->gen = 1;
+          }
+        }
       }
 
-      // division by zero in float gives -nan
-      f32 target_t = bin_power / max_power;
-      draw_samples[j] += (target_t - draw_samples[j]) * 8 * dt;
+      if (g_state->last_mf != NULL)
+      {
+        MusicFile *active_mf = mf_from_handle(g_state->active_mf_handle);
+        // IMPORTANT: get a feel for when to use assert()
+        // it's for programmer error, i.e. we stuffed up; not the library etc.
+        ASSERT(active_mf != NULL);
+        if (!mf_is_zero(active_mf))
+        {
+          StopMusicStream(active_mf->music);
+          DetachAudioStreamProcessor(active_mf->music.stream, music_callback);
+          // UnloadMusicStream(active_mf->music);
+        }
 
-      j += 1;
+        active_mf = g_state->last_mf; 
+        g_state->active_mf_handle = handle_from_mf(active_mf);
+
+        AttachAudioStreamProcessor(active_mf->music.stream, music_callback);
+        SetMusicVolume(active_mf->music, 0.5f);
+        PlayMusicStream(active_mf->music);
+      }
+
+      // IMPORTANT: no float equality, e.g. f==0 (f > F32_EPSILON)
+
+      UnloadDroppedFiles(dropped_files);
     }
 
-    Rectangle fft_region = {0.0f, 0.0f, (f32)GetRenderWidth(), (f32)GetRenderHeight()};
-    fft_render(fft_region, draw_samples, num_bins);
+
+    MusicFile *active_mf = mf_from_handle(g_state->active_mf_handle);
+
+    if (IsKeyPressed(KEY_P))
+    {
+      if (IsMusicStreamPlaying(active_mf->music)) PauseMusicStream(active_mf->music);
+      else ResumeMusicStream(active_mf->music);
+    }
+    else if (IsKeyPressed(KEY_R))
+    {
+      StopMusicStream(active_mf->music);
+      PlayMusicStream(active_mf->music);
+    }
+
+    UpdateMusicStream(active_mf->music); 
+
+    if (!IsMusicReady(active_mf->music))
+    {
+      char *text = "Drag 'n' Drop Music";
+
+      Color backing_colour = {255, 173, 0, 255};
+
+      Color front_start_colour = WHITE;
+      Color front_end_colour = {255, 222, 0, 255}; 
+
+      f32 t_base = 0.4f;
+      f32 t_range = 0.54f;
+
+      f64 delta = (GetTime()- g_state->mouse_last_moved_counter);
+
+      f32 flash_duration = 1.0f;
+      f32 s = delta / flash_duration;
+      s = SQUARE(s); // F32_SQRT(F32_ABS(s)); linear to hump
+      s = 1 - s; // ease-out
+      if (delta < flash_duration)
+      {
+        Color new_front_start_colour = {255, 0, 255, 255};
+        front_start_colour = lerp_color(&front_start_colour, &new_front_start_colour, s);
+
+        Color new_front_end_colour = {255, 0, 0, 255};
+        front_end_colour = lerp_color(&front_end_colour, &new_front_end_colour, s);
+
+        t_range += (0.2f - t_range) * s; 
+      }
+
+      f32 t = F32_COS(g_state->frame_counter * 3 * dt);
+      t *= t;
+      t = t_base + t_range * t;
+      Color front_colour = lerp_color(&front_start_colour, &front_end_colour, t);
+      u32 offset = font.baseSize / 40;
+
+      Vector2 t_size = MeasureTextEx(font, text, font_size, 0);
+      Vector2 t_vec = {
+        rw/2.0f - t_size.x/2.0f,
+        rh/2.0f - t_size.y/2.0f
+      };
+      Vector2 b_vec = {
+        t_vec.x + offset,
+        t_vec.y - offset,
+      };
+
+      DrawTextEx(font, text, t_vec, font_size, 0, backing_colour);
+      DrawTextEx(font, text, b_vec, font_size, 0, front_colour);
+    }
+    else
+    {
+      for (u32 i = 0, j = g_state->samples_ring.head; 
+           i < NUM_SAMPLES; 
+           i += 1, j = (j - 1) % NUM_SAMPLES)
+      {
+        // we are multiplying by 1Hz, so shifting frequencies.
+        f32 t = (f32)i/(NUM_SAMPLES - 1);
+        g_state->hann_samples[i] = hann_function(g_state->samples_ring.samples[j], t);
+      }
+
+      PROFILE_BANDWIDTH("fft", NUM_SAMPLES * sizeof(f32))
+      {
+        fft(g_state->hann_samples, 1, g_state->fft_samples, NUM_SAMPLES);
+      }
+
+      f32 max_power = 1.0f;
+      // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
+      for (u32 i = 0; i < HALF_SAMPLES; i += 1)
+      {
+        f32 power = f32z_power(g_state->fft_samples[i]);
+        if (power > max_power) max_power = power;
+      }
+
+      u32 num_bins = 0;
+      for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
+      {
+        num_bins += 1; 
+      }
+
+      u32 j = 0;
+      for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
+      {
+        f32 next_f = F32_CEIL(f * 1.06f);
+        f32 bin_power = 0.0f;
+        for (u32 i = (u32)f; i < HALF_SAMPLES && i < (u32)next_f; i += 1)
+        {
+          f32 p = f32z_power(g_state->fft_samples[i]); 
+          if (p > bin_power) bin_power = p;
+        }
+
+        // division by zero in float gives -nan
+        f32 target_t = bin_power / max_power;
+        g_state->draw_samples[j] += (target_t - g_state->draw_samples[j]) * 8 * dt;
+
+        j += 1;
+      }
+
+      f32 fft_h = (f32)rh * 0.75f;
+      Rectangle fft_region = {0.0f, 0.0f, (f32)rw, fft_h};
+      fft_render(fft_region, g_state->draw_samples, num_bins);
+
+      Rectangle mf_region = {fft_region.x, fft_region.y + fft_region.height,
+                             fft_region.width, (f32)rh - fft_region.height};
+      mf_render(mf_region);
+    }
 
     EndDrawing();
 
@@ -304,7 +530,7 @@ int main(int argc, char *argv[])
     #if ASAN_ENABLED
       if (GetTime() >= 5.0) quit = true;
     #endif
-    mem_arena_clear(frame_arena);
+    mem_arena_clear(g_state->frame_arena);
   }
   CloseWindow();
 

@@ -166,6 +166,13 @@ f64_neg_inf(void)
 INTERNAL f32 f32_abs(f32 f) { return f < 0.0f ? -f : +f; }
 INTERNAL f64 f64_abs(f64 f) { return f < 0.0 ? -f : +f; }
 
+typedef struct Handle Handle;
+struct Handle
+{ 
+  void *addr;
+  u64 gen;
+};
+
 typedef struct SourceLoc SourceLoc;
 struct SourceLoc
 {
@@ -223,6 +230,7 @@ struct SourceLoc
 
 #define EACH_ENUM(type, it) type it = (type)0; it < type##_COUNT; it = (type)(it+1)
 #define EACH_NONZERO_ENUM(type, it) type it = (type)1; it < type##_COUNT; it = (type)(it+1)
+
 
 // TODO(Ryan): Date/time helpers?
 
