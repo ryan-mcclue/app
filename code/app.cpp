@@ -39,6 +39,10 @@
 // 1. draw visualisation
 // 2. segment screen with region visualisation
 
+// 1. scope variables
+// 2. merge into state struct with arenas and .h file
+
+
 INTERNAL f32
 hann_function(f32 sample, f32 t)
 {
@@ -103,13 +107,64 @@ f32z_power(f32z z)
 #define NUM_SAMPLES (1 << 13) 
 STATIC_ASSERT(IS_POW2(NUM_SAMPLES));
 #define HALF_SAMPLES (NUM_SAMPLES / 2)
-
 struct SampleBuffer
 {
   f32 samples[NUM_SAMPLES];
   u32 head;
 };
-GLOBAL SampleBuffer global_sample_buffer;
+GLOBAL SampleBuffer g_sample_buffer;
+
+typedef struct MusicFile MusicFile;
+struct MusicFile
+{
+  MusicFile *next;
+  String8 name;
+  Music music;
+
+  // increment this on every alloc/dealloc()
+  u64 gen;
+};
+
+INTERNAL Handle 
+handle_from_music_file(MusicFile *music_file)
+{
+  Handle handle = ZERO_STRUCT;
+  if (entity != NULL)
+  {
+    handle.addr = music_file;
+    handle.gen = music_file->gen;
+  }
+  return handle;
+}
+
+INTERNAL MusicFile *
+music_file_from_handle(Handle handle)
+{
+  MusicFile *result = (MusicFile *)handle.addr;
+  if (result != NULL && handle.gen != result->gen)
+  {
+    result = NULL;
+  }
+  return result;
+}
+
+struct State
+{
+  MemArena *arena;
+  MemArena *frame_arena;
+  u64 frame_counter;
+
+  // TODO(Ryan): Separate arena for music files
+  MusicFile *first_music_file, *last_music_file;
+  MusicFile *first_free_music_file;
+  Handle active_music_file;
+
+  //SampleBuffer sample_ring;
+  f32 hann_samples[NUM_SAMPLES];
+  f32z fft_samples[NUM_SAMPLES];
+  f32 draw_samples[HALF_SAMPLES];
+};
+GLOBAL State *g_state;
 
 INTERNAL void 
 music_callback(void *buffer, unsigned int frames)
@@ -124,8 +179,8 @@ music_callback(void *buffer, unsigned int frames)
     f32 left = norm_buf[i];
     f32 right = norm_buf[i + 1];
 
-    global_sample_buffer.samples[global_sample_buffer.head] = MAX(left, right);
-    global_sample_buffer.head = (global_sample_buffer.head + 1) % NUM_SAMPLES;
+    g_sample_buffer.samples[g_sample_buffer.head] = MAX(left, right);
+    g_sample_buffer.head = (g_sample_buffer.head + 1) % NUM_SAMPLES;
   }
 }
 
@@ -221,14 +276,11 @@ int main(int argc, char *argv[])
   //    };
   //    DrawTextEx(plug->font, label, position, plug->font.baseSize, 0, color);
 
+  g_state = MEM_ARENA_PUSH_STRUCT_ZERO(arena, State);
+  g_state->arena = arena;
+  g_state->frame_arena = mem_arena_allocate(GB(1), MB(64));
 
-  f32 hann_samples[NUM_SAMPLES] = ZERO_STRUCT;
-  f32z fft_samples[NUM_SAMPLES] = ZERO_STRUCT;
-  f32 draw_samples[HALF_SAMPLES] = ZERO_STRUCT;
-
-  MemArena *frame_arena = mem_arena_allocate(GB(1), MB(64));
-  u64 frame_counter = 0;
-  for (b32 quit = false; !quit; frame_counter += 1)
+  for (b32 quit = false; !quit; g_state->frame_counter += 1)
   {  
     BeginDrawing();
     ClearBackground(RAYWHITE);
@@ -249,25 +301,37 @@ int main(int argc, char *argv[])
       else ResumeMusicStream(music);
     }
 
-    for (u32 i = 0, j = global_sample_buffer.head; 
+    // drag 'n' drop
+    // if (IsFileDropped())
+    // {
+    //   FilePathList dropped_files = LoadDroppedFiles();
+    //   for (u32 i = 0, offset = filePathCounter; i < (int)droppedFiles.count; i++)
+    //   {
+    //     dropped_files.paths[i];
+    //   }
+    //   UnloadDroppedFiles(droppedFiles);
+    // }
+
+
+    for (u32 i = 0, j = g_sample_buffer.head; 
          i < NUM_SAMPLES; 
          i += 1, j = (j - 1) % NUM_SAMPLES)
     {
       // we are multiplying by 1Hz, so shifting frequencies.
       f32 t = (f32)i/(NUM_SAMPLES - 1);
-      hann_samples[i] = hann_function(global_sample_buffer.samples[j], t);
+      g_state->hann_samples[i] = hann_function(g_sample_buffer.samples[j], t);
     }
 
     PROFILE_BANDWIDTH("fft", NUM_SAMPLES * sizeof(f32))
     {
-      fft(hann_samples, 1, fft_samples, NUM_SAMPLES);
+      fft(g_state->hann_samples, 1, g_state->fft_samples, NUM_SAMPLES);
     }
 
     f32 max_power = 1.0f;
     // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
     for (u32 i = 0; i < HALF_SAMPLES; i += 1)
     {
-      f32 power = f32z_power(fft_samples[i]);
+      f32 power = f32z_power(g_state->fft_samples[i]);
       if (power > max_power) max_power = power;
     }
 
@@ -284,19 +348,19 @@ int main(int argc, char *argv[])
       f32 bin_power = 0.0f;
       for (u32 i = (u32)f; i < HALF_SAMPLES && i < (u32)next_f; i += 1)
       {
-        f32 p = f32z_power(fft_samples[i]); 
+        f32 p = f32z_power(g_state->fft_samples[i]); 
         if (p > bin_power) bin_power = p;
       }
 
       // division by zero in float gives -nan
       f32 target_t = bin_power / max_power;
-      draw_samples[j] += (target_t - draw_samples[j]) * 8 * dt;
+      g_state->draw_samples[j] += (target_t - g_state->draw_samples[j]) * 8 * dt;
 
       j += 1;
     }
 
     Rectangle fft_region = {0.0f, 0.0f, (f32)GetRenderWidth(), (f32)GetRenderHeight()};
-    fft_render(fft_region, draw_samples, num_bins);
+    fft_render(fft_region, g_state->draw_samples, num_bins);
 
     EndDrawing();
 
@@ -304,7 +368,7 @@ int main(int argc, char *argv[])
     #if ASAN_ENABLED
       if (GetTime() >= 5.0) quit = true;
     #endif
-    mem_arena_clear(frame_arena);
+    mem_arena_clear(g_state->frame_arena);
   }
   CloseWindow();
 
