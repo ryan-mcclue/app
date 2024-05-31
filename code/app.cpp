@@ -7,6 +7,14 @@
 
 #include <raylib.h>
 
+// TODO:
+      // menu to select:
+      //   - rainbow
+      //   - circles
+      //   - audio source, e.g. miniaudio microphone, OS mixer etc.  
+      //   - comments for vis. suggestions: https://www.youtube.com/watch?v=1pqIg-Ug7bU&list=PLpM-Dvs8t0Vak1rrE2NJn8XYEJ5M7-BqT&index=7&t=669s 
+      
+      
 // 1. convert samples from time to frequency domain
 // f32 in; (index is time)
 // f32 complex out; (so index is frequency; amplitude and phase of a frequency component)
@@ -25,6 +33,11 @@
 // the cost is adding 1Hz signal, whose effect is neglible
 // the resultant frequency graph will be more tight, i.e. less spread out
 
+
+
+
+// 1. draw visualisation
+// 2. segment screen with region visualisation
 
 INTERNAL f32
 hann_function(f32 sample, f32 t)
@@ -130,6 +143,28 @@ music_callback(void *buffer, unsigned int frames)
   DrawText(text, 50, 50, 48, RED); \
 } while (0)
 
+INTERNAL void
+fft_render(Rectangle r, f32 *samples, u32 num_samples)
+{
+  DrawRectangleRec(r, BLACK);
+
+  f32 bin_w = r.width / num_samples;
+  for (u32 i = 0; i < num_samples; i += 1)
+  {
+    f32 bin_h = samples[i] * r.height;
+    Rectangle bin_rect = {
+      r.x + (i * bin_w), 
+      r.y + (r.height - bin_h), 
+      bin_w, 
+      bin_h
+    }; 
+
+    f32 hue = (f32)i / num_samples;
+    Color c = ColorFromHSV(360 * hue, 1.0f, 1.0f);
+    DrawRectangleRec(bin_rect, c);
+  }
+}
+
 #if TEST_BUILD
 int testable_main(int argc, char *argv[])
 #else
@@ -160,6 +195,7 @@ int main(int argc, char *argv[])
   profiler_init();
 
   SetTraceLogLevel(LOG_ERROR); 
+  SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
 
   u32 screen_width = 1080;
   u32 screen_height = 720;
@@ -201,6 +237,12 @@ int main(int argc, char *argv[])
 
     UpdateMusicStream(music); 
 
+    if (IsKeyPressed(KEY_F)) 
+    {
+      if (IsWindowMaximized()) RestoreWindow();
+      else MaximizeWindow();
+    }
+
     if (IsKeyPressed(KEY_P))
     {
       if (IsMusicStreamPlaying(music)) PauseMusicStream(music);
@@ -235,7 +277,6 @@ int main(int argc, char *argv[])
       num_bins += 1; 
     }
 
-    f32 bin_w = GetRenderWidth() / num_bins;
     u32 j = 0;
     for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
     {
@@ -251,23 +292,11 @@ int main(int argc, char *argv[])
       f32 target_t = bin_power / max_power;
       draw_samples[j] += (target_t - draw_samples[j]) * 8 * dt;
 
-      f32 bin_h = draw_samples[j] * GetRenderHeight();
-
-      Rectangle bar_rect = {j * bin_w, GetRenderHeight() - bin_h, bin_w, bin_h};
-
-      // menu to select:
-      //   - rainbow
-      //   - circles
-      //   - audio source, e.g. microphone, OS mixer etc.  
-      //   - comments for vis. suggestions: https://www.youtube.com/watch?v=1pqIg-Ug7bU&list=PLpM-Dvs8t0Vak1rrE2NJn8XYEJ5M7-BqT&index=7&t=669s 
-      
-      // want to blend colours
-      // f32 hue = (f32)j / num_bins;
-      // Color c = ColorFromHSV(360 * hue, 1.0f, 1.0f);
-      DrawRectangleRec(bar_rect, RED);
-
       j += 1;
     }
+
+    Rectangle fft_region = {0.0f, 0.0f, (f32)GetRenderWidth(), (f32)GetRenderHeight()};
+    fft_render(fft_region, draw_samples, num_bins);
 
     EndDrawing();
 
