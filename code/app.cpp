@@ -4,8 +4,10 @@
 #endif
 
 #include "base/base-inc.h"
-
 #include <raylib.h>
+
+#include "app.h"
+
 
 // TODO:
       // menu to select:
@@ -101,44 +103,52 @@ f32z_power(f32z z)
 // as playing chiptune, getting square waves
 // a square wave is composed of many sine waves, so will see ramp 
 
-// IMPORTANT(Ryan): The number of samples limits number of frequencies we can derive
-// This seems to be a good number for a decent visualisation
-// Also, as displaying logarithmically, we don't actually have this large number
-#define NUM_SAMPLES (1 << 13) 
-STATIC_ASSERT(IS_POW2(NUM_SAMPLES));
-#define HALF_SAMPLES (NUM_SAMPLES / 2)
-struct SampleBuffer
+INTERNAL MusicFile *
+create_mf(String8 name, Music music)
 {
-  f32 samples[NUM_SAMPLES];
-  u32 head;
-};
-GLOBAL SampleBuffer g_sample_buffer;
+  MusicFile *mf = NULL;
+  if (g_state->first_free_mf != NULL)
+  {
+    mf = g_state->first_free_mf;
+    g_state->first_free_mf = g_state->first_free_mf->next;
+  }
+  else
+  {
+    mf = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->arena, MusicFile);
+  }
+  mf->name = name;
+  mf->music = music;
+  mf->gen++;
 
-typedef struct MusicFile MusicFile;
-struct MusicFile
+  DLL_PUSH_BACK(g_state->first_mf, g_state->last_mf, mf);
+
+  return mf;
+}
+
+INTERNAL void
+remove_mf(MusicFile *mf)
 {
-  MusicFile *next;
-  String8 name;
-  Music music;
-
-  // increment this on every alloc/dealloc()
-  u64 gen;
-};
+  DLL_REMOVE(g_state->first_mf, g_state->last_mf, mf);
+  mf->next = g_state->first_free_mf;
+  mf->prev = NULL;
+  g_state->first_free_mf = mf;
+  mf->gen++;
+}
 
 INTERNAL Handle 
-handle_from_music_file(MusicFile *music_file)
+handle_from_mf(MusicFile *mf)
 {
   Handle handle = ZERO_STRUCT;
-  if (entity != NULL)
+  if (mf != NULL)
   {
-    handle.addr = music_file;
-    handle.gen = music_file->gen;
+    handle.addr = mf;
+    handle.gen = mf->gen;
   }
   return handle;
 }
 
 INTERNAL MusicFile *
-music_file_from_handle(Handle handle)
+mf_from_handle(Handle handle)
 {
   MusicFile *result = (MusicFile *)handle.addr;
   if (result != NULL && handle.gen != result->gen)
@@ -147,24 +157,6 @@ music_file_from_handle(Handle handle)
   }
   return result;
 }
-
-struct State
-{
-  MemArena *arena;
-  MemArena *frame_arena;
-  u64 frame_counter;
-
-  // TODO(Ryan): Separate arena for music files
-  MusicFile *first_music_file, *last_music_file;
-  MusicFile *first_free_music_file;
-  Handle active_music_file;
-
-  //SampleBuffer sample_ring;
-  f32 hann_samples[NUM_SAMPLES];
-  f32z fft_samples[NUM_SAMPLES];
-  f32 draw_samples[HALF_SAMPLES];
-};
-GLOBAL State *g_state;
 
 INTERNAL void 
 music_callback(void *buffer, unsigned int frames)
@@ -179,20 +171,20 @@ music_callback(void *buffer, unsigned int frames)
     f32 left = norm_buf[i];
     f32 right = norm_buf[i + 1];
 
-    g_sample_buffer.samples[g_sample_buffer.head] = MAX(left, right);
-    g_sample_buffer.head = (g_sample_buffer.head + 1) % NUM_SAMPLES;
+    g_state->samples_ring.samples[g_state->samples_ring.head] = MAX(left, right);
+    g_state->samples_ring.head = (g_state->samples_ring.head + 1) % NUM_SAMPLES;
   }
 }
 
 #define DRAW_U32(var) do {\
-  String8 s = str8_fmt(frame_arena, STRINGIFY(var) " = %" PRIu32, var); \
+  String8 s = str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu32, var); \
   char text[64] = ZERO_STRUCT; \
   str8_to_cstr(s, text, sizeof(text)); \
   DrawText(text, 50, 50, 48, RED); \
 } while (0)
 
 #define DRAW_F32(var) do {\
-  String8 s = str8_fmt(frame_arena, STRINGIFY(var) " = %f", var); \
+  String8 s = str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %f", var); \
   char text[64] = ZERO_STRUCT; \
   str8_to_cstr(s, text, sizeof(text)); \
   DrawText(text, 50, 50, 48, RED); \
@@ -295,6 +287,11 @@ int main(int argc, char *argv[])
       else MaximizeWindow();
     }
 
+    MusicFile *active_mf = mf_from_handle(g_state->active_mf);
+    if (active_mf == NULL)
+    {
+    }
+
     if (IsKeyPressed(KEY_P))
     {
       if (IsMusicStreamPlaying(music)) PauseMusicStream(music);
@@ -313,13 +310,13 @@ int main(int argc, char *argv[])
     // }
 
 
-    for (u32 i = 0, j = g_sample_buffer.head; 
+    for (u32 i = 0, j = g_state->samples_ring.head; 
          i < NUM_SAMPLES; 
          i += 1, j = (j - 1) % NUM_SAMPLES)
     {
       // we are multiplying by 1Hz, so shifting frequencies.
       f32 t = (f32)i/(NUM_SAMPLES - 1);
-      g_state->hann_samples[i] = hann_function(g_sample_buffer.samples[j], t);
+      g_state->hann_samples[i] = hann_function(g_state->samples_ring.samples[j], t);
     }
 
     PROFILE_BANDWIDTH("fft", NUM_SAMPLES * sizeof(f32))
