@@ -29,10 +29,13 @@ struct State
   MemArena *frame_arena;
   u64 frame_counter;
 
-  // TODO(Ryan): Separate arena for music files
-  MusicFile *first_mf, *last_mf;
-  MusicFile *first_free_mf;
-  Handle active_mf;
+  // TODO(Ryan): Don't use state arena.
+  // Use a fixed-sized dynamic list for memory coherency
+  // Don't expect large enough number to warrant own arena
+  //MusicFile *first_mf, *last_mf;
+  //MusicFile *first_free_mf;
+  //Handle active_mf;
+  Music music;
 
   SampleRing samples_ring;
   f32 hann_samples[NUM_SAMPLES];

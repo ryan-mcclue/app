@@ -103,8 +103,9 @@ f32z_power(f32z z)
 // as playing chiptune, getting square waves
 // a square wave is composed of many sine waves, so will see ramp 
 
+#if 0
 INTERNAL MusicFile *
-create_mf(String8 name, Music music)
+alloc_mf()
 {
   MusicFile *mf = NULL;
   if (g_state->first_free_mf != NULL)
@@ -116,17 +117,13 @@ create_mf(String8 name, Music music)
   {
     mf = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->arena, MusicFile);
   }
-  mf->name = name;
-  mf->music = music;
   mf->gen++;
-
-  DLL_PUSH_BACK(g_state->first_mf, g_state->last_mf, mf);
 
   return mf;
 }
 
 INTERNAL void
-remove_mf(MusicFile *mf)
+dealloc_mf(MusicFile *mf)
 {
   DLL_REMOVE(g_state->first_mf, g_state->last_mf, mf);
   mf->next = g_state->first_free_mf;
@@ -157,6 +154,7 @@ mf_from_handle(Handle handle)
   }
   return result;
 }
+#endif
 
 INTERNAL void 
 music_callback(void *buffer, unsigned int frames)
@@ -250,23 +248,8 @@ int main(int argc, char *argv[])
   SetTargetFPS(60);
 
   InitAudioDevice();
-  Music music = LoadMusicStream("assets/billys-sacrifice.mp3");
-  //Music music = LoadMusicStream("assets/checking-manifest.mp3");
-  // NOTE(Ryan): Must play initially to be able to resume
-  PlayMusicStream(music);
-  PauseMusicStream(music);
-  AttachAudioStreamProcessor(music.stream, music_callback);
-  //DetachAudioStreamProcessor(music.stream, music_callback);
-  //  SetMusicVolume(plug->music, 0.5f);
 
 
-  // Font font = LoadFontEx("./fonts/Alegreya-Regular.ttf", 69, NULL, 0);
-  //    Vector2 size = MeasureTextEx(plug->font, label, plug->font.baseSize, 0);
-  //    Vector2 position = {
-  //        w/2 - size.x/2,
-  //        h/2 - size.y/2,
-  //    };
-  //    DrawTextEx(plug->font, label, position, plug->font.baseSize, 0, color);
 
   g_state = MEM_ARENA_PUSH_STRUCT_ZERO(arena, State);
   g_state->arena = arena;
@@ -278,8 +261,8 @@ int main(int argc, char *argv[])
     ClearBackground(RAYWHITE);
 
     f32 dt = GetFrameTime();
-
-    UpdateMusicStream(music); 
+    u32 rw = GetRenderWidth();
+    u32 rh = GetRenderHeight();
 
     if (IsKeyPressed(KEY_F)) 
     {
@@ -287,77 +270,101 @@ int main(int argc, char *argv[])
       else MaximizeWindow();
     }
 
-    MusicFile *active_mf = mf_from_handle(g_state->active_mf);
-    if (active_mf == NULL)
+    if (IsFileDropped())
     {
+      FilePathList dropped_files = LoadDroppedFiles();
+      char *path = dropped_files.paths[dropped_files.count-1];
+
+      if (IsMusicReady(g_state->music))
+      {
+        StopMusicStream(g_state->music);
+        DetachAudioStreamProcessor(g_state->music.stream, music_callback);
+        UnloadMusicStream(g_state->music);
+      }
+
+      g_state->music = LoadMusicStream(path);
+      AttachAudioStreamProcessor(g_state->music.stream, music_callback);
+      //SetMusicVolume(g_state->music, 0.5f);
+      PlayMusicStream(g_state->music);
+
+      UnloadDroppedFiles(dropped_files);
     }
 
     if (IsKeyPressed(KEY_P))
     {
-      if (IsMusicStreamPlaying(music)) PauseMusicStream(music);
-      else ResumeMusicStream(music);
+      if (IsMusicStreamPlaying(g_state->music)) PauseMusicStream(g_state->music);
+      else ResumeMusicStream(g_state->music);
     }
 
-    // drag 'n' drop
-    // if (IsFileDropped())
-    // {
-    //   FilePathList dropped_files = LoadDroppedFiles();
-    //   for (u32 i = 0, offset = filePathCounter; i < (int)droppedFiles.count; i++)
-    //   {
-    //     dropped_files.paths[i];
-    //   }
-    //   UnloadDroppedFiles(droppedFiles);
-    // }
+    UpdateMusicStream(g_state->music); 
 
+    //MusicFile *active_mf = mf_from_handle(g_state->active_mf);
+    //if (active_mf != NULL)
+    //{
+    //  Music music = active_mf->music;
+    //}
 
-    for (u32 i = 0, j = g_state->samples_ring.head; 
-         i < NUM_SAMPLES; 
-         i += 1, j = (j - 1) % NUM_SAMPLES)
+    if (!IsMusicReady(g_state->music))
     {
-      // we are multiplying by 1Hz, so shifting frequencies.
-      f32 t = (f32)i/(NUM_SAMPLES - 1);
-      g_state->hann_samples[i] = hann_function(g_state->samples_ring.samples[j], t);
+      u32 font_size = rh / 16; 
+      char *t = "Drag 'n' Drop Music";
+      Font f = GetFontDefault()
+      Vector2 ts = MeasureTextEx(f, font_size);
+      f32 t_x = rw/2 - ts.x/2;
+      f32 t_y = rh/2 - ts.y/2;
+      DrawTextEx(t, t_x, t_y, font_size, RED);
     }
-
-    PROFILE_BANDWIDTH("fft", NUM_SAMPLES * sizeof(f32))
+    else
     {
-      fft(g_state->hann_samples, 1, g_state->fft_samples, NUM_SAMPLES);
-    }
-
-    f32 max_power = 1.0f;
-    // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
-    for (u32 i = 0; i < HALF_SAMPLES; i += 1)
-    {
-      f32 power = f32z_power(g_state->fft_samples[i]);
-      if (power > max_power) max_power = power;
-    }
-
-    u32 num_bins = 0;
-    for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
-    {
-      num_bins += 1; 
-    }
-
-    u32 j = 0;
-    for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
-    {
-      f32 next_f = F32_CEIL(f * 1.06f);
-      f32 bin_power = 0.0f;
-      for (u32 i = (u32)f; i < HALF_SAMPLES && i < (u32)next_f; i += 1)
+      for (u32 i = 0, j = g_state->samples_ring.head; 
+           i < NUM_SAMPLES; 
+           i += 1, j = (j - 1) % NUM_SAMPLES)
       {
-        f32 p = f32z_power(g_state->fft_samples[i]); 
-        if (p > bin_power) bin_power = p;
+        // we are multiplying by 1Hz, so shifting frequencies.
+        f32 t = (f32)i/(NUM_SAMPLES - 1);
+        g_state->hann_samples[i] = hann_function(g_state->samples_ring.samples[j], t);
       }
 
-      // division by zero in float gives -nan
-      f32 target_t = bin_power / max_power;
-      g_state->draw_samples[j] += (target_t - g_state->draw_samples[j]) * 8 * dt;
+      PROFILE_BANDWIDTH("fft", NUM_SAMPLES * sizeof(f32))
+      {
+        fft(g_state->hann_samples, 1, g_state->fft_samples, NUM_SAMPLES);
+      }
 
-      j += 1;
+      f32 max_power = 1.0f;
+      // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
+      for (u32 i = 0; i < HALF_SAMPLES; i += 1)
+      {
+        f32 power = f32z_power(g_state->fft_samples[i]);
+        if (power > max_power) max_power = power;
+      }
+
+      u32 num_bins = 0;
+      for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
+      {
+        num_bins += 1; 
+      }
+
+      u32 j = 0;
+      for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
+      {
+        f32 next_f = F32_CEIL(f * 1.06f);
+        f32 bin_power = 0.0f;
+        for (u32 i = (u32)f; i < HALF_SAMPLES && i < (u32)next_f; i += 1)
+        {
+          f32 p = f32z_power(g_state->fft_samples[i]); 
+          if (p > bin_power) bin_power = p;
+        }
+
+        // division by zero in float gives -nan
+        f32 target_t = bin_power / max_power;
+        g_state->draw_samples[j] += (target_t - g_state->draw_samples[j]) * 8 * dt;
+
+        j += 1;
+      }
+
+      Rectangle fft_region = {0.0f, 0.0f, (f32)rw(), (f32)rh()};
+      fft_render(fft_region, g_state->draw_samples, num_bins);
     }
-
-    Rectangle fft_region = {0.0f, 0.0f, (f32)GetRenderWidth(), (f32)GetRenderHeight()};
-    fft_render(fft_region, g_state->draw_samples, num_bins);
 
     EndDrawing();
 
