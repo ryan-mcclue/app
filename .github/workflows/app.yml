@@ -1,6 +1,9 @@
 name: app 
 run-name: ${{ github.actor }} run
-on: [push]
+on:
+  push: 
+    tags-ignore:
+      - cc*
 
 # Once build system stabilises, set up own docker image for speed
 jobs:

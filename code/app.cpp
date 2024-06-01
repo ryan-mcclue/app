@@ -248,8 +248,9 @@ int main(int argc, char *argv[])
   SetTargetFPS(60);
 
   InitAudioDevice();
-
-
+  
+  // fc-list
+  Font font = LoadFontEx("assets/KacstOffice.ttf", 64, NULL, 0);
 
   g_state = MEM_ARENA_PUSH_STRUCT_ZERO(arena, State);
   g_state->arena = arena;
@@ -263,6 +264,7 @@ int main(int argc, char *argv[])
     f32 dt = GetFrameTime();
     u32 rw = GetRenderWidth();
     u32 rh = GetRenderHeight();
+    f32 font_size = rh / 16;
 
     if (IsKeyPressed(KEY_F)) 
     {
@@ -306,13 +308,15 @@ int main(int argc, char *argv[])
 
     if (!IsMusicReady(g_state->music))
     {
-      u32 font_size = rh / 16; 
+      // TODO(Ryan): Have tag that will not run CI for temp commits
       char *t = "Drag 'n' Drop Music";
-      Font f = GetFontDefault()
-      Vector2 ts = MeasureTextEx(f, font_size);
-      f32 t_x = rw/2 - ts.x/2;
-      f32 t_y = rh/2 - ts.y/2;
-      DrawTextEx(t, t_x, t_y, font_size, RED);
+      Vector2 ts = MeasureTextEx(font, t, font_size, 0);
+      // font.baseSize
+      Vector2 tv = {
+        rw/2.0f - ts.x/2.0f,
+        rh/2.0f - ts.y/2.0f
+      };
+      DrawTextEx(font, t, tv, font_size, 0, RED);
     }
     else
     {
@@ -362,7 +366,7 @@ int main(int argc, char *argv[])
         j += 1;
       }
 
-      Rectangle fft_region = {0.0f, 0.0f, (f32)rw(), (f32)rh()};
+      Rectangle fft_region = {0.0f, 0.0f, (f32)rw, (f32)rh};
       fft_render(fft_region, g_state->draw_samples, num_bins);
     }
 
