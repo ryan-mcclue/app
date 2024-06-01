@@ -251,6 +251,7 @@ int main(int argc, char *argv[])
   
   // fc-list
   Font font = LoadFontEx("assets/KacstOffice.ttf", 64, NULL, 0);
+  // somehin
 
   g_state = MEM_ARENA_PUSH_STRUCT_ZERO(arena, State);
   g_state->arena = arena;
