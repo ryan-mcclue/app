@@ -250,8 +250,7 @@ int main(int argc, char *argv[])
   InitAudioDevice();
   
   // fc-list
-  Font font = LoadFontEx("assets/KacstOffice.ttf", 64, NULL, 0);
-  // somehin
+  Font font = LoadFontEx("assets/Alegraya.ttf", 64, NULL, 0);
 
   g_state = MEM_ARENA_PUSH_STRUCT_ZERO(arena, State);
   g_state->arena = arena;
