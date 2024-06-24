@@ -51,12 +51,25 @@ struct State
   bool fullscreen_fft;
   Texture2D fullscreen_tex;
 
+  Font font;
+
   SampleRing samples_ring;
   f32 hann_samples[NUM_SAMPLES];
   f32z fft_samples[NUM_SAMPLES];
   f32 draw_samples[HALF_SAMPLES];
 };
-GLOBAL State *g_state;
+
+typedef void (*app_preload_t)(State *s);
+typedef void (*app_update_t)(State *s);
+typedef void (*app_postload_t)(State *s);
+
+typedef struct AppCode AppCode;
+struct AppCode
+{
+  app_preload_t preload;
+  app_update_t update;
+  app_postload_t postload;
+};
 
 
 #endif
