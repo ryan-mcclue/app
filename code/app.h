@@ -44,6 +44,12 @@ struct State
   MusicFileIndex *first_free_mf_idx;
   MusicFile *first_mf, *last_mf;
   Handle active_mf_handle;
+  u32 num_mf;
+  f32 mf_scroll_velocity;
+  f32 mf_scroll;
+
+  bool fullscreen_fft;
+  Texture2D fullscreen_tex;
 
   SampleRing samples_ring;
   f32 hann_samples[NUM_SAMPLES];
@@ -51,8 +57,6 @@ struct State
   f32 draw_samples[HALF_SAMPLES];
 };
 GLOBAL State *g_state;
-
-
 
 
 #endif

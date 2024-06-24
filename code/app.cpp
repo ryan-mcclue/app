@@ -5,9 +5,70 @@
 
 #include "base/base-inc.h"
 #include <raylib.h>
+#include <raymath.h>
 
 #include "app.h"
 
+typedef void (*app_preload_t)(State *s);
+struct AppCode {
+  app_preload_t app_preload;
+  void (*app_update)(State *s);
+  void (*app_postload)(State *s);
+};
+
+#include <dlfcn.h>
+GLOBAL void *g_app_reload_handle = NULL;
+INTERNAL AppCode 
+app_reload(void)
+{
+  if (g_app_reload_handle != NULL) dlclose(g_app_reload_handle);
+
+  g_app_reload_handle = dlopen("app-reload.so", RTLD_NOW);
+  if (g_app_reload_handle == NULL) 
+  {
+    TraceLog(LOG_ERROR, "HOTRELOAD: could not load %s: %s", libplug_file_name, dlerror());
+    return false;
+  }
+
+  void *name = dlsym(g_app_reload, "");
+  if (name == NULL) { \
+    TraceLog(LOG_ERROR, "HOTRELOAD: could not find %s symbol in %s: %s", \
+#name, libplug_file_name, dlerror()); \
+
+      return true;
+}
+
+State plug_init()
+{
+  // create state struct and load assets
+}
+void plug_prereload()
+{
+DetachAudioStreamProcessor(it->music.stream, callback);
+}
+void plug_update(&state)
+{
+  BeginDrawing();
+  // ...
+  EndDrawing();
+}
+void plug_postreload()
+{
+  AttachAudioStreamProcessor(it->music.stream, callback);
+}
+
+void main()
+{
+    State = plug_init();
+    while (!WindowShouldClose()) {
+        if (IsKeyPressed(KEY_R)) {
+            void *state = plug_pre_reload();
+            if (!reload_libplug()) return 1;
+            plug_post_reload(state);
+        }
+        plug_update();
+    }
+}
 
 // TODO:
       // menu to select:
@@ -234,18 +295,58 @@ lerp_color(Color *a, Color *b, f32 t)
 INTERNAL void
 mf_render(Rectangle r)
 {
-  DrawRectangleRec(r, DARKGRAY);
+  // timeline panel
+  // GetMusicTimePlayed()/GetMusicTimeLength() 
+  // f32 t = (mouse_x - bar.x) / r.w; 
+  // f32 play_pos = t * GetMusicTimeLength(); 
+  // SeekMusicStream(music, play_pos);
+
+  // SDF for font good at any size
+  // GetFileName()
+  
+  // vertical scroll: Begin/EndScissorMode();
+
+  // TODO: cut out overflowed text
+  // TODO: add padding when drawing UI
+  // TODO: color selection on brightness  
+
+  // if (entire_scroll_area > visible_area)
+  // {
+  //   f32 t = visible_area / entire_scroll_area;
+  // }
+  // scroll is part of region. so substract it when drawing items
+  // f32 scroll_height = r.height * 0.1f;
+  // Rectangle scroll_bar_region = {
+  //   mf_region.x + mf_scroll,
+  //   mf_region.y + mf_region.height - scroll_height,
+  //   mf_region.width * t,
+  //   scroll_height
+  // };
+  // f32 scroll_bar_off = (mf_scroll / entire_scroll) * w;
+
+  Color bg_color = DARKGRAY;
+  DrawRectangleRec(r, bg_color);
+
   f32 mf_dim = r.height * 0.7f;
   f32 mf_margin = r.height * 0.1f; 
   f32 mf_width = mf_dim;
   f32 mf_height = mf_width;
   u32 i = 0;
 
+  f32 mf_v = mf_width;
+  g_state->mf_scroll_velocity *= 0.9f;
+  g_state->mf_scroll_velocity += GetMouseWheelMove() * mf_v;
+  g_state->mf_scroll += g_state->mf_scroll_velocity * GetFrameTime(); 
+
+  f32 max_scroll = (mf_width * g_state->num_mf) - r.width;
+  if (max_scroll < 0) max_scroll = (mf_width * g_state->num_mf);
+  g_state->mf_scroll = CLAMP(0.0f, g_state->mf_scroll, max_scroll);
+
   MusicFile *active_mf = mf_from_handle(g_state->active_mf_handle);
   for (MusicFile *mf = g_state->first_mf;
        mf != NULL; mf = mf->next)
   {
-    Rectangle mf_rec = {r.x + mf_margin + i * (mf_margin + mf_width), 
+    Rectangle mf_rec = {g_state->mf_scroll + r.x + mf_margin + i * (mf_margin + mf_width), 
                         r.y + mf_margin, 
                         mf_width, 
                         mf_height};
@@ -257,6 +358,7 @@ mf_render(Rectangle r)
     }
     if (CheckCollisionPointRec(GetMousePosition(), mf_rec))
     {
+      // TODO: add filename tooltip
       mf_color = GREEN;
       if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
       {
@@ -275,6 +377,78 @@ mf_render(Rectangle r)
 
     i += 1;
   }
+}
+
+// asset manager:
+//   1. hotreloading requires global struct schema to stay same; so require list
+//   2. need some sort of key mapping to asset so can know if already loaded
+//   3. will unload all assets on reload    
+
+INTERNAL bool
+draw_fullscreen_btn(Rectangle region)
+{
+  bool clicked = false;
+
+  f64 delta = (GetTime() - g_state->mouse_last_moved_counter);
+  bool draw_fullscreen = (g_state->fullscreen_fft && delta < 3.0f) || 
+                         !g_state->fullscreen_fft;
+  if (draw_fullscreen) 
+  {
+    Color btn_color = GRAY;
+    bool hover_over = false;
+    if (CheckCollisionPointRec(GetMousePosition(), region))
+    {
+      hover_over = true;
+      btn_color = ColorBrightness(GRAY, 0.15); // -0.15 makes darker
+      if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+      {
+        clicked = true;
+      } 
+    }
+
+    u32 icon_index = 0;
+    // NOTE: boolean to indexes, perhaps: i = (hover_over << 1) | (fullscreen)
+    if (g_state->fullscreen_fft)
+    {
+      if (hover_over)
+      {
+        icon_index = 3;
+      }
+      else
+      {
+        icon_index = 2;
+      }
+    }
+    else
+    {
+      if (hover_over)
+      {
+        icon_index = 0;
+      }
+      else
+      {
+        icon_index = 1;
+      }
+    }
+
+    DrawRectangleRounded(region, 0.5f, 20.0f, btn_color);
+
+    f32 icon_size = 225.0f;
+    f32 btn_scale = (region.width / icon_size) * 0.75f;
+    Rectangle src = {icon_index * 225.f, icon_index * 225.f, 225.f, 225.f};
+    Rectangle dst = {
+      region.x + region.width/2.0f - (icon_size/2.0f)*btn_scale,
+      region.y + region.height/2.0f - (icon_size/2.0f)*btn_scale,
+      icon_size*btn_scale,
+      icon_size*btn_scale
+    };
+    Vector2 origin = {0.f, 0.f};
+    DrawTexturePro(g_state->fullscreen_tex, src, dst, origin, 0.f, ColorBrightness(WHITE, -0.1f)); 
+    // make texture white to tint to all
+    //DrawTextureEx(fullscreen_btn_tex, btn_pos, 0.0f, btn_scale, ColorBrightness(WHITE, -0.1f)); 
+  }
+
+  return clicked;
 }
 
 #if TEST_BUILD
@@ -330,6 +504,11 @@ int main(int argc, char *argv[])
      SLL_STACK_PUSH(g_state->first_free_mf_idx, mf_idx);
   }
 
+  Image fullscreen_btn_img = LoadImage("assets/fullscreen-icon.png");
+  g_state->fullscreen_tex = LoadTextureFromImage(fullscreen_btn_img);
+  // we will be scaling, so want anti-aliasing
+  SetTextureFilter(g_state->fullscreen_tex, TEXTURE_FILTER_BILINEAR);
+
   for (b32 quit = false; !quit; g_state->frame_counter += 1)
   {  
     BeginDrawing();
@@ -346,8 +525,8 @@ int main(int argc, char *argv[])
       else MaximizeWindow();
     }
 
-    Vector2 mouse_delta = GetMouseDelta();
-    if (mouse_delta.x > 0.0f || mouse_delta.y > 0.0f)
+    if (Vector2Length(GetMouseDelta()) > 0.0f)
+    //if (mouse_delta.x > 0.0f || mouse_delta.y > 0.0f)
     {
       g_state->mouse_last_moved_counter = GetTime();
     }
@@ -373,6 +552,7 @@ int main(int argc, char *argv[])
             SLL_STACK_POP(g_state->first_free_mf_idx);
             SLL_QUEUE_PUSH(g_state->first_mf, g_state->last_mf, mf);
             mf->gen = 1;
+            g_state->num_mf += 1;
           }
         }
       }
@@ -431,9 +611,9 @@ int main(int argc, char *argv[])
       f32 t_base = 0.4f;
       f32 t_range = 0.54f;
 
-      f64 delta = (GetTime()- g_state->mouse_last_moved_counter);
+      f64 delta = (GetTime() - g_state->mouse_last_moved_counter);
 
-      f32 flash_duration = 1.0f;
+      f32 flash_duration = 1.0f; // 1 second
       f32 s = delta / flash_duration;
       s = SQUARE(s); // F32_SQRT(F32_ABS(s)); linear to hump
       s = 1 - s; // ease-out
@@ -469,6 +649,10 @@ int main(int argc, char *argv[])
     }
     else
     {
+      if (IsKeyPressed(KEY_SPACE)) {
+        g_state->fullscreen_fft ^= 1;
+      }
+
       for (u32 i = 0, j = g_state->samples_ring.head; 
            i < NUM_SAMPLES; 
            i += 1, j = (j - 1) % NUM_SAMPLES)
@@ -516,12 +700,26 @@ int main(int argc, char *argv[])
       }
 
       f32 fft_h = (f32)rh * 0.75f;
+      if (g_state->fullscreen_fft)
+      {
+        fft_h = (f32)rh;
+      }
+
       Rectangle fft_region = {0.0f, 0.0f, (f32)rw, fft_h};
       fft_render(fft_region, g_state->draw_samples, num_bins);
 
       Rectangle mf_region = {fft_region.x, fft_region.y + fft_region.height,
                              fft_region.width, (f32)rh - fft_region.height};
       mf_render(mf_region);
+
+      f32 btn_w = 100.f;
+      f32 btn_margin = 10.f;
+      Rectangle btn_rec = {fft_region.x + fft_region.width - btn_w - btn_margin, 
+                           fft_region.y + btn_margin, btn_w, btn_w};
+      if (draw_fullscreen_btn(btn_rec))
+      {
+        g_state->fullscreen_fft ^= 1;
+      }
     }
 
     EndDrawing();
