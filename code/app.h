@@ -30,6 +30,66 @@ struct MusicFileIndex
   u32 index;
 };
 
+typedef struct FontNode FontNode;
+struct FontNode {
+  String8 key;
+  FontNode *hash_next;
+  FontNode *hash_prev;
+  Font f;
+};
+
+typedef struct FontSlot FontSlot;
+struct FontSlot {
+  FontNode *first;
+  FontNode *last;
+};
+
+
+// to write generic code in C, just focus on ptr and bytes (void* to u8*)
+// same structure, different ending members
+// require offsetof for padding
+
+// array of slots
+INTERNAL void *
+hash_find(void *slots, String8 key, memory_index slot_size, memory_index next_offset, memory_index value_offset)
+{
+  u64 hash = hash_from_string(key);
+  u64 slot_i = hash % 256;
+  u8 *slot = (u8 *)slots + slot_i * slot_size; 
+
+  u8 *first_node = slot;
+  String8 node_key = *(String8 *)(first_node);
+  if (str8_match(node_key, key)) return (first_node + value_offset);
+
+  for (u8 *chain_node = (first_node + next_offset);
+       chain_node != NULL; 
+       chain_node = (chain_node + next_offset))
+  {
+    node_key = *(String8 *)chain_node;
+    if (str8_match(node_key, key)) return (u8 *)(node + value_offset);
+  }
+
+  // TODO: return nil font
+  return NULL;
+}
+
+#define HASH_FIND_FONT(key) \
+  *(Font *)hash_find(state->assets.font_slots, key, sizeof(FontSlot), OFFSET_OF_MEMBER(FontNode, next), OFFSET_OF_MEMBER(FontNode, value))
+
+typedef struct Assets Assets;
+struct Assets
+{
+  FontSlot *font_slots;
+  ImageSlot *image_slots;
+  TextureSlot *texture_slots;
+};
+
+
+// asset manager:
+//   1. hotreloading requires global struct schema to stay same; so require list
+//   2. also allows us to get from any location, e.g. filesystem, binary pack, etc.
+//   3. will unload all assets on reload 
+
 struct State
 {
   MemArena *arena;
@@ -70,6 +130,7 @@ struct AppCode
   app_update_t update;
   app_postload_t postload;
 };
+
 
 
 #endif

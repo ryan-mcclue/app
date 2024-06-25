@@ -314,11 +314,6 @@ mf_render(Rectangle r)
   }
 }
 
-// asset manager:
-//   1. hotreloading requires global struct schema to stay same; so require list
-//   2. need some sort of key mapping to asset so can know if already loaded
-//   3. will unload all assets on reload    
-
 INTERNAL bool
 draw_fullscreen_btn(Rectangle region)
 {
@@ -391,6 +386,8 @@ app_preload(State *state)
 {
   MusicFile *active_mf = mf_from_handle(state->active_mf_handle);
   DetachAudioStreamProcessor(active_mf->music.stream, music_callback);
+
+  // assets_unload()
 }
 
 EXPORT void 
