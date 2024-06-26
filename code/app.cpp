@@ -95,6 +95,35 @@ int main(int argc, char *argv[])
 
   profiler_init();
 
+  String8 v[] = {
+    str8_lit("value1"),
+    str8_lit("value2"),
+    str8_lit("value3"),
+    str8_lit("value4"),
+    str8_lit("value5"),
+  };
+
+  FontSlot *font_slots = MEM_ARENA_PUSH_ARRAY_ZERO(arena, FontSlot, 256);
+  for (u32 i = 0; i < ARRAY_COUNT(v); i += 1)
+  {
+    String8 k = v[i];
+    u64 slot_i = str8_hash(k) % 256;
+
+    FontNode *n = MEM_ARENA_PUSH_STRUCT_ZERO(arena, FontNode);
+    n->key = k;
+    n->font = slot_i;
+
+    FontSlot *s = &font_slots[slot_i];
+    __SLL_QUEUE_PUSH(s->first, s->last, n, hash_next);
+  }
+
+#define HASH_FIND_FONT(key) \
+  *(u32 *)hash_find(font_slots, key, sizeof(FontSlot), OFFSET_OF_MEMBER(FontNode, hash_next), OFFSET_OF_MEMBER(FontNode, font))
+
+  // NOTE(Ryan): gf2 (ctrl-d for assembly)
+  // with optimisations, compiler will determine offset at compile time
+  volatile u32 font_find = HASH_FIND_FONT(str8_lit("value1"));
+
   SetTraceLogLevel(LOG_ERROR); 
   SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
 
