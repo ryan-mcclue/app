@@ -26,12 +26,13 @@ app_nil_update(State *state)
   }
 
   f32 font_size = 64.0f;
-  Vector2 size = MeasureTextEx(state->font, g_nil_update_err_msg, font_size, 0);
+  Font f = GetFontDefault();
+  Vector2 size = MeasureTextEx(f, g_nil_update_err_msg, font_size, 0);
   Vector2 pos = {
     GetRenderWidth()/2.0f - size.x/2.0f,
     GetRenderHeight()/2.0f - size.y/2.0f,
   };
-  DrawTextEx(state->font, g_nil_update_err_msg, pos, font_size, 0, RED);
+  DrawTextEx(f, g_nil_update_err_msg, pos, font_size, 0, RED);
 
   EndDrawing();
 }
@@ -109,8 +110,7 @@ int main(int argc, char *argv[])
   state->arena = arena;
   state->frame_arena = mem_arena_allocate(GB(1), MB(64));
 
-  // fc-list
-  state->font = LoadFontEx("assets/Lato-Medium.ttf", 64, NULL, 0);
+  state->assets.arena = mem_arena_allocate(GB(1), MB(64));
 
   for (u32 i = 0; i < MUSIC_FILE_POOL_SIZE; i += 1)
   {
@@ -118,11 +118,6 @@ int main(int argc, char *argv[])
      mf_idx->index = i;
      SLL_STACK_PUSH(state->first_free_mf_idx, mf_idx);
   }
-
-  Image fullscreen_btn_img = LoadImage("assets/fullscreen-icon.png");
-  state->fullscreen_tex = LoadTextureFromImage(fullscreen_btn_img);
-  // we will be scaling, so want anti-aliasing
-  SetTextureFilter(state->fullscreen_tex, TEXTURE_FILTER_BILINEAR);
 
   AppCode app_code = app_reload();
   for (b32 quit = false; !quit; state->frame_counter += 1)

@@ -227,6 +227,146 @@ lerp_color(Color *a, Color *b, f32 t)
   return res;
 }
 
+#define ASSETS_NUM_SLOTS 256
+
+// to write generic code in C, just focus on ptr and bytes (void* to u8*)
+// same structure, different ending members
+// require offsetof for padding
+
+INTERNAL void *
+assets_find_(void *slots, String8 key, memory_index slot_size, 
+            memory_index key_offset,
+            memory_index next_offset, 
+            memory_index value_offset)
+{
+  u64 hash = str8_hash(key);
+  u64 slot_i = hash % ASSETS_NUM_SLOTS;
+  u8 *slot = (u8 *)slots + slot_i * slot_size; 
+
+  u8 *first_node = slot;
+  String8 node_key = *(String8 *)(first_node + key_offset);
+  if (str8_match(node_key, key, 0)) return (first_node + value_offset);
+
+  for (u8 *chain_node = (first_node + next_offset);
+       chain_node != NULL; 
+       chain_node = (chain_node + next_offset))
+  {
+    node_key = *(String8 *)(chain_node + key_offset);
+    if (str8_match(node_key, key, 0)) return (u8 *)(chain_node + value_offset);
+  }
+
+  return NULL;
+}
+
+// IMPORTANT(Ryan): View macro parameters as tokens to be expanded, e.g. could be any number of values
+// (u8 *)(&slots[0].first->hash_next) - (u8 *)(&slots[0])
+// NOTE(Ryan): gf2 (ctrl-d for assembly)
+// with optimisations, compiler will determine offsets at compile time
+#define ASSETS_FIND(slots, key) \
+  assets_find_(slots, key, sizeof(*slots), \
+              OFFSET_OF_MEMBER(__typeof__(*slots[0].first), key), \
+              OFFSET_OF_MEMBER(__typeof__(*slots[0].first), hash_chain_next), \
+              OFFSET_OF_MEMBER(__typeof__(*slots[0].first), value))
+
+INTERNAL Font
+assets_get_font(String8 key)
+{
+  Font *p = (Font *)ASSETS_FIND(g_state->assets.fonts.slots, key);
+  if (p != NULL) return *p;
+  else
+  {
+    char cpath[256] = ZERO_STRUCT;
+    str8_to_cstr(key, cpath, sizeof(cpath)); 
+
+    // TODO(Ryan): Add parameters to asset keys
+    Font v = LoadFontEx(cpath, 64, NULL, 0);
+
+    FontNode *n = MEM_ARENA_PUSH_STRUCT(g_state->assets.arena, FontNode);
+    n->key = key;
+    n->value = v;
+
+    u64 slot_i = str8_hash(key) % ASSETS_NUM_SLOTS;
+    FontSlot *s = &g_state->assets.fonts.slots[slot_i];
+    __SLL_QUEUE_PUSH(s->first, s->last, n, hash_chain_next);
+    __SLL_STACK_PUSH(g_state->assets.fonts.collection, n, hash_collection_next);
+
+    return v;
+  }
+}
+
+INTERNAL Image
+assets_get_image(String8 key)
+{
+  Image *p = (Image *)ASSETS_FIND(g_state->assets.images.slots, key);
+  if (p != NULL) return *p;
+  else
+  {
+    char cpath[256] = ZERO_STRUCT;
+    str8_to_cstr(key, cpath, sizeof(cpath)); 
+
+    Image v = LoadImage(cpath);
+
+    ImageNode *n = MEM_ARENA_PUSH_STRUCT(g_state->assets.arena, ImageNode);
+    n->key = key;
+    n->value = v;
+
+    u64 slot_i = str8_hash(key) % ASSETS_NUM_SLOTS;
+    ImageSlot *s = &g_state->assets.images.slots[slot_i];
+    __SLL_QUEUE_PUSH(s->first, s->last, n, hash_chain_next);
+    __SLL_STACK_PUSH(g_state->assets.images.collection, n, hash_collection_next);
+
+    return v;
+  }
+}
+
+INTERNAL Texture
+assets_get_texture(String8 key)
+{
+  Texture *p = (Texture *)ASSETS_FIND(g_state->assets.textures.slots, key);
+  if (p != NULL) return *p;
+  else
+  {
+    Image i = assets_get_image(key);
+    Texture v = LoadTextureFromImage(i);
+    SetTextureFilter(v, TEXTURE_FILTER_BILINEAR);
+
+    TextureNode *n = MEM_ARENA_PUSH_STRUCT(g_state->assets.arena, TextureNode);
+    n->key = key;
+    n->value = v;
+
+    u64 slot_i = str8_hash(key) % ASSETS_NUM_SLOTS;
+    TextureSlot *s = &g_state->assets.textures.slots[slot_i];
+    __SLL_QUEUE_PUSH(s->first, s->last, n, hash_chain_next);
+    __SLL_STACK_PUSH(g_state->assets.textures.collection, n, hash_collection_next);
+
+    return v;
+  }
+}
+
+INTERNAL void
+assets_preload(void)
+{
+#define X(Name, name, names) \
+  for (Name##Node *n = g_state->assets.names.collection; \
+       n != NULL; \
+       n = n->hash_collection_next) \
+  { \
+    Unload##Name(n->value); \
+  } \
+  g_state->assets.names = ZERO_STRUCT;
+
+  ASSETS_STRUCTS_LIST
+#undef X
+
+  mem_arena_clear(g_state->assets.arena);
+#define X(Name, name, names) \
+  g_state->assets.names.slots = MEM_ARENA_PUSH_ARRAY_ZERO(g_state->assets.arena, Name##Slot, ASSETS_NUM_SLOTS);
+
+  ASSETS_STRUCTS_LIST
+#undef X
+}
+
+
 INTERNAL void
 mf_render(Rectangle r)
 {
@@ -373,7 +513,8 @@ draw_fullscreen_btn(Rectangle region)
       icon_size*btn_scale
     };
     Vector2 origin = {0.f, 0.f};
-    DrawTexturePro(g_state->fullscreen_tex, src, dst, origin, 0.f, ColorBrightness(WHITE, -0.1f)); 
+    DrawTexturePro(assets_get_texture(str8_lit("assets/fullscreen-icon.png")),
+                   src, dst, origin, 0.f, ColorBrightness(WHITE, -0.1f)); 
     // make texture white to tint to all
     //DrawTextureEx(fullscreen_btn_tex, btn_pos, 0.0f, btn_scale, ColorBrightness(WHITE, -0.1f)); 
   }
@@ -381,89 +522,6 @@ draw_fullscreen_btn(Rectangle region)
   return clicked;
 }
 
-#define ASSETS_NUM_SLOTS 256
-
-// to write generic code in C, just focus on ptr and bytes (void* to u8*)
-// same structure, different ending members
-// require offsetof for padding
-
-INTERNAL void *
-assets_find_(void *slots, String8 key, memory_index slot_size, 
-            memory_index key_offset,
-            memory_index next_offset, 
-            memory_index value_offset)
-{
-  u64 hash = str8_hash(key);
-  u64 slot_i = hash % ASSETS_NUM_SLOTS;
-  u8 *slot = (u8 *)slots + slot_i * slot_size; 
-
-  u8 *first_node = slot;
-  String8 node_key = *(String8 *)(first_node + key_offset);
-  if (str8_match(node_key, key, 0)) return (first_node + value_offset);
-
-  for (u8 *chain_node = (first_node + next_offset);
-       chain_node != NULL; 
-       chain_node = (chain_node + next_offset))
-  {
-    node_key = *(String8 *)(chain_node + key_offset);
-    if (str8_match(node_key, key, 0)) return (u8 *)(chain_node + value_offset);
-  }
-
-  return NULL;
-}
-
-// IMPORTANT(Ryan): View macro parameters as tokens to be expanded, e.g. could be any number of values
-// (u8 *)(&slots[0].first->hash_next) - (u8 *)(&slots[0])
-// NOTE(Ryan): gf2 (ctrl-d for assembly)
-// with optimisations, compiler will determine offsets at compile time
-#define ASSETS_FIND(slots, key) \
-  assets_find(slots, key, sizeof(*slots), \
-              OFFSET_OF_MEMBER(typeof(*slots[0].first), key), \
-              OFFSET_OF_MEMBER(typeof(*slots[0].first), hash_next), \
-              OFFSET_OF_MEMBER(typeof(*slots[0].first), value))
-
-INTERNAL Font
-assets_get_font(String8 path)
-{
-  Font *f = ASSETS_FIND(g_state->assets.fonts.slots, path);
-  if (f != NULL) return f;
-  else
-  {
-    // TODO(Ryan): Add parameters to asset keys
-    f = LoadFontEx(path, 64, NULL, 0);
-
-    u64 slot_i = str8_hash(k) % ASSETS_NUM_SLOTS;
-
-    FontNode *fn = MEM_ARENA_PUSH_STRUCT(g_state->assets.arena, FontNode);
-    fn->key = k;
-    fn->value = f;
-
-    FontSlot *s = &g_state->assets.font_slots[slot_i];
-    __SLL_QUEUE_PUSH(s->first, s->last, fn, hash_chain_next);
-    __SLL_STACK_PUSH(g_state->assets.fonts.collection, fn, hash_collection_next);
-
-    return f;
-  }
-}
-
-INTERNAL void
-assets_preload(void)
-{
-#define X(Name, name, names) \
-  for (Name##Node *n = g_state->assets.names->collection; \ 
-       n != NULL; \
-       n = n->hash_collection_next) \
-  { \
-    Unload##Name(n->value); \
-  } \
-  g_state->assets.names->slots = NULL; \
-  g_state->assets.names->collection = NULL; \
-
-  ASSETS_STRUCTS_LIST
-#undef X
-
-  mem_arena_clear(g_state->assets.arena);
-}
 
 EXPORT void 
 app_preload(State *state)
@@ -471,7 +529,7 @@ app_preload(State *state)
   MusicFile *active_mf = mf_from_handle(state->active_mf_handle);
   DetachAudioStreamProcessor(active_mf->music.stream, music_callback);
 
-  // assets_preload();
+  assets_preload();
 }
 
 EXPORT void 
@@ -479,9 +537,6 @@ app_postload(State *state)
 {
   MusicFile *active_mf = mf_from_handle(state->active_mf_handle);
   AttachAudioStreamProcessor(active_mf->music.stream, music_callback);
-
-  // assets_postload();
-  // g_state->assets.names.slots = MEM_ARENA_PUSH_ARRAY_ZERO();
 }
 
 EXPORT void 
@@ -496,6 +551,8 @@ app_update(State *state)
   u32 rw = GetRenderWidth();
   u32 rh = GetRenderHeight();
   f32 font_size = rh / 8;
+
+  Font main_font = assets_get_font(str8_lit("assets/Lato-Medium.ttf"));
 
   if (IsKeyPressed(KEY_F)) 
   {
@@ -610,9 +667,10 @@ app_update(State *state)
     t *= t;
     t = t_base + t_range * t;
     Color front_colour = lerp_color(&front_start_colour, &front_end_colour, t);
-    u32 offset = g_state->font.baseSize / 40;
 
-    Vector2 t_size = MeasureTextEx(g_state->font, text, font_size, 0);
+    u32 offset = main_font.baseSize / 40;
+
+    Vector2 t_size = MeasureTextEx(main_font, text, font_size, 0);
     Vector2 t_vec = {
       rw/2.0f - t_size.x/2.0f,
       rh/2.0f - t_size.y/2.0f
@@ -622,8 +680,8 @@ app_update(State *state)
       t_vec.y - offset,
     };
 
-    DrawTextEx(g_state->font, text, t_vec, font_size, 0, backing_colour);
-    DrawTextEx(g_state->font, text, b_vec, font_size, 0, front_colour);
+    DrawTextEx(main_font, text, t_vec, font_size, 0, backing_colour);
+    DrawTextEx(main_font, text, b_vec, font_size, 0, front_colour);
   }
   else
   {

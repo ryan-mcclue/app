@@ -30,7 +30,7 @@ struct MusicFileIndex
   u32 index;
 };
 
-#define ASSET_STRUCTS_LIST \
+#define ASSETS_STRUCTS_LIST \
   X(Font, font, fonts) \
   X(Image, image, images) \
   X(Texture, texture, textures)
@@ -52,7 +52,7 @@ struct MusicFileIndex
   struct Name##Assets { \
     Name##Slot *slots; \
     Name##Node *collection; \
-  }
+  };
 ASSETS_STRUCTS_LIST
 #undef X
 
