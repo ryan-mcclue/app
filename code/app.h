@@ -30,25 +30,43 @@ struct MusicFileIndex
   u32 index;
 };
 
-typedef struct FontNode FontNode;
-struct FontNode {
-  String8 key;
-  FontNode *hash_next;
-  u32 font;
-};
+#define ASSET_STRUCTS_LIST \
+  X(Font, font) \
+  X(Image, image) \
+  X(Texture, texture)
 
-typedef struct FontSlot FontSlot;
-struct FontSlot {
-  FontNode *first;
-  FontNode *last;
-};
+#define X(Name, name) \
+  typedef struct Name##Node Name##Node; \
+  struct Name##Node { \
+    String8 key; \
+    Name##Node *hash_next; \
+    Name value; \
+  }; \
+  typedef struct Name##Slot Name##Slot; \
+  struct Name##Slot { \
+    Name##Node *first; \
+    Name##Node *last; \
+  };
+ASSETS_STRUCTS_LIST
+#undef X
 
-// array of slots
+#define X(Name, name) \
+  Name##Slot name##_slots; 
+  typedef struct Assets Assets;
+  struct Assets {
+    ASSETS_STRUCTS_LIST    
+  };
+#undef X
+
+#define ASSETS_NUM_SLOTS 256
+
 INTERNAL void *
-hash_find(void *slots, String8 key, memory_index slot_size, memory_index next_offset, memory_index value_offset)
+hash_find(void *slots, u32 num_slots, String8 key, 
+          memory_index slot_size, memory_index next_offset, 
+          memory_index value_offset)
 {
   u64 hash = str8_hash(key);
-  u64 slot_i = hash % 256;
+  u64 slot_i = hash % num_slots;
   u8 *slot = (u8 *)slots + slot_i * slot_size; 
 
   u8 *first_node = slot;
@@ -67,21 +85,34 @@ hash_find(void *slots, String8 key, memory_index slot_size, memory_index next_of
   return NULL;
 }
 
+INTERNAL Font
+asset_get_font(String8 path)
+{
+  Font *f = HASH_FIND(g_state->font_slots, key);
+  if (f != NULL) return f;
+  else
+  {
+    FontNode *fn = MEM_ARENA_PUSH_STRUCT(g_state->assets->arena, FontNode);
+    fn->value = LoadFontEx(path, );
+    // SetTextureFilter();
+    return rn->value;
+  }
+}
+
+INTERNAL void
+asset_unload_everything(void)
+{
+  for (u32 i = 0; i < ASSET_SLOT_SIZE; i += 1)
+  {
+    UnloadTexture();
+    UnloadImage();
+  }
+}
+
 
 // to write generic code in C, just focus on ptr and bytes (void* to u8*)
 // same structure, different ending members
 // require offsetof for padding
-
-/*
-typedef struct Assets Assets;
-struct Assets
-{
-  FontSlot *font_slots;
-  ImageSlot *image_slots;
-  TextureSlot *texture_slots;
-};
-*/
-
 
 // asset manager:
 //   1. hotreloading requires global struct schema to stay same; so require list
@@ -107,9 +138,8 @@ struct State
   f32 mf_scroll;
 
   bool fullscreen_fft;
-  Texture2D fullscreen_tex;
 
-  Font font;
+  Assets assets;
 
   SampleRing samples_ring;
   f32 hann_samples[NUM_SAMPLES];

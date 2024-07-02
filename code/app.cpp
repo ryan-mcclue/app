@@ -117,12 +117,17 @@ int main(int argc, char *argv[])
     __SLL_QUEUE_PUSH(s->first, s->last, n, hash_next);
   }
 
-#define HASH_FIND_FONT(key) \
-  *(u32 *)hash_find(font_slots, key, sizeof(FontSlot), OFFSET_OF_MEMBER(FontNode, hash_next), OFFSET_OF_MEMBER(FontNode, font))
+// IMPORTANT(Ryan): View macro parameters as tokens to be expanded, e.g. could be any number of values
+// (u8 *)(&slots[0].first->hash_next) - (u8 *)(&slots[0])
+#define HASH_FIND(slots, key) \
+  hash_find(slots, key, sizeof(*slots), \
+            OFFSET_OF_MEMBER(typeof(*slots[0].first), hash_next), \
+            OFFSET_OF_MEMBER(typeof(*slots[0].first), value))
+
 
   // NOTE(Ryan): gf2 (ctrl-d for assembly)
   // with optimisations, compiler will determine offset at compile time
-  volatile u32 font_find = HASH_FIND_FONT(str8_lit("value1"));
+  volatile u32 font_find = HASH_FIND(str8_lit("value1"));
 
   SetTraceLogLevel(LOG_ERROR); 
   SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
