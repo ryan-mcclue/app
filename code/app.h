@@ -31,93 +31,40 @@ struct MusicFileIndex
 };
 
 #define ASSET_STRUCTS_LIST \
-  X(Font, font) \
-  X(Image, image) \
-  X(Texture, texture)
+  X(Font, font, fonts) \
+  X(Image, image, images) \
+  X(Texture, texture, textures)
 
-#define X(Name, name) \
+#define X(Name, name, names) \
   typedef struct Name##Node Name##Node; \
   struct Name##Node { \
     String8 key; \
-    Name##Node *hash_next; \
+    Name##Node *hash_chain_next; \
+    Name##Node *hash_collection_next; \
     Name value; \
   }; \
   typedef struct Name##Slot Name##Slot; \
   struct Name##Slot { \
     Name##Node *first; \
     Name##Node *last; \
-  };
+  }; \
+  typedef struct Name##Assets Name##Assets; \
+  struct Name##Assets { \
+    Name##Slot *slots; \
+    Name##Node *collection; \
+  }
 ASSETS_STRUCTS_LIST
 #undef X
 
-#define X(Name, name) \
-  Name##Slot name##_slots; 
+#define X(Name, name, names) \
+  Name##Assets names; 
   typedef struct Assets Assets;
   struct Assets {
+    MemArena *arena;
     ASSETS_STRUCTS_LIST    
   };
 #undef X
 
-#define ASSETS_NUM_SLOTS 256
-
-INTERNAL void *
-hash_find(void *slots, u32 num_slots, String8 key, 
-          memory_index slot_size, memory_index next_offset, 
-          memory_index value_offset)
-{
-  u64 hash = str8_hash(key);
-  u64 slot_i = hash % num_slots;
-  u8 *slot = (u8 *)slots + slot_i * slot_size; 
-
-  u8 *first_node = slot;
-  // IMPORTANT(Ryan): Assumes key is first element of node
-  String8 node_key = *(String8 *)(first_node);
-  if (str8_match(node_key, key, 0)) return (first_node + value_offset);
-
-  for (u8 *chain_node = (first_node + next_offset);
-       chain_node != NULL; 
-       chain_node = (chain_node + next_offset))
-  {
-    node_key = *(String8 *)chain_node;
-    if (str8_match(node_key, key, 0)) return (u8 *)(chain_node + value_offset);
-  }
-
-  return NULL;
-}
-
-INTERNAL Font
-asset_get_font(String8 path)
-{
-  Font *f = HASH_FIND(g_state->font_slots, key);
-  if (f != NULL) return f;
-  else
-  {
-    FontNode *fn = MEM_ARENA_PUSH_STRUCT(g_state->assets->arena, FontNode);
-    fn->value = LoadFontEx(path, );
-    // SetTextureFilter();
-    return rn->value;
-  }
-}
-
-INTERNAL void
-asset_unload_everything(void)
-{
-  for (u32 i = 0; i < ASSET_SLOT_SIZE; i += 1)
-  {
-    UnloadTexture();
-    UnloadImage();
-  }
-}
-
-
-// to write generic code in C, just focus on ptr and bytes (void* to u8*)
-// same structure, different ending members
-// require offsetof for padding
-
-// asset manager:
-//   1. hotreloading requires global struct schema to stay same; so require list
-//   2. also allows us to get from any location, e.g. filesystem, binary pack, etc.
-//   3. will unload all assets on reload 
 
 struct State
 {

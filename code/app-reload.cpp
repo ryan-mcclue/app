@@ -381,13 +381,97 @@ draw_fullscreen_btn(Rectangle region)
   return clicked;
 }
 
+#define ASSETS_NUM_SLOTS 256
+
+// to write generic code in C, just focus on ptr and bytes (void* to u8*)
+// same structure, different ending members
+// require offsetof for padding
+
+INTERNAL void *
+assets_find_(void *slots, String8 key, memory_index slot_size, 
+            memory_index key_offset,
+            memory_index next_offset, 
+            memory_index value_offset)
+{
+  u64 hash = str8_hash(key);
+  u64 slot_i = hash % ASSETS_NUM_SLOTS;
+  u8 *slot = (u8 *)slots + slot_i * slot_size; 
+
+  u8 *first_node = slot;
+  String8 node_key = *(String8 *)(first_node + key_offset);
+  if (str8_match(node_key, key, 0)) return (first_node + value_offset);
+
+  for (u8 *chain_node = (first_node + next_offset);
+       chain_node != NULL; 
+       chain_node = (chain_node + next_offset))
+  {
+    node_key = *(String8 *)(chain_node + key_offset);
+    if (str8_match(node_key, key, 0)) return (u8 *)(chain_node + value_offset);
+  }
+
+  return NULL;
+}
+
+// IMPORTANT(Ryan): View macro parameters as tokens to be expanded, e.g. could be any number of values
+// (u8 *)(&slots[0].first->hash_next) - (u8 *)(&slots[0])
+// NOTE(Ryan): gf2 (ctrl-d for assembly)
+// with optimisations, compiler will determine offsets at compile time
+#define ASSETS_FIND(slots, key) \
+  assets_find(slots, key, sizeof(*slots), \
+              OFFSET_OF_MEMBER(typeof(*slots[0].first), key), \
+              OFFSET_OF_MEMBER(typeof(*slots[0].first), hash_next), \
+              OFFSET_OF_MEMBER(typeof(*slots[0].first), value))
+
+INTERNAL Font
+assets_get_font(String8 path)
+{
+  Font *f = ASSETS_FIND(g_state->assets.fonts.slots, path);
+  if (f != NULL) return f;
+  else
+  {
+    // TODO(Ryan): Add parameters to asset keys
+    f = LoadFontEx(path, 64, NULL, 0);
+
+    u64 slot_i = str8_hash(k) % ASSETS_NUM_SLOTS;
+
+    FontNode *fn = MEM_ARENA_PUSH_STRUCT(g_state->assets.arena, FontNode);
+    fn->key = k;
+    fn->value = f;
+
+    FontSlot *s = &g_state->assets.font_slots[slot_i];
+    __SLL_QUEUE_PUSH(s->first, s->last, fn, hash_chain_next);
+    __SLL_STACK_PUSH(g_state->assets.fonts.collection, fn, hash_collection_next);
+
+    return f;
+  }
+}
+
+INTERNAL void
+assets_preload(void)
+{
+#define X(Name, name, names) \
+  for (Name##Node *n = g_state->assets.names->collection; \ 
+       n != NULL; \
+       n = n->hash_collection_next) \
+  { \
+    Unload##Name(n->value); \
+  } \
+  g_state->assets.names->slots = NULL; \
+  g_state->assets.names->collection = NULL; \
+
+  ASSETS_STRUCTS_LIST
+#undef X
+
+  mem_arena_clear(g_state->assets.arena);
+}
+
 EXPORT void 
 app_preload(State *state)
 {
   MusicFile *active_mf = mf_from_handle(state->active_mf_handle);
   DetachAudioStreamProcessor(active_mf->music.stream, music_callback);
 
-  // assets_unload()
+  // assets_preload();
 }
 
 EXPORT void 
@@ -395,6 +479,9 @@ app_postload(State *state)
 {
   MusicFile *active_mf = mf_from_handle(state->active_mf_handle);
   AttachAudioStreamProcessor(active_mf->music.stream, music_callback);
+
+  // assets_postload();
+  // g_state->assets.names.slots = MEM_ARENA_PUSH_ARRAY_ZERO();
 }
 
 EXPORT void 
