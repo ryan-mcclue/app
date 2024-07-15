@@ -251,6 +251,11 @@ elif [[ "$PARAM_MODE" == "release" ]]; then
   COMPILER_FLAGS+=( "-fdevirtualize-at-ltrans" )
 fi
 
+# NOTE(Ryan): Metaprogram
+$PARAM_COMPILER ${COMPILER_FLAGS[*]} code/meta.cpp -o build/meta
+./build/meta code/"$NAME".cpp
+exit
+
 # NOTE(Ryan): Hotreloading
 $PARAM_COMPILER -fPIC -shared ${COMPILER_FLAGS[*]} code/"$RELOAD_NAME".cpp -o build/"$RELOAD_BINARY_NAME" ${LINKER_FLAGS[*]}
 
