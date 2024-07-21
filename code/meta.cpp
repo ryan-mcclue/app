@@ -26,8 +26,26 @@
 //    return result;
 //}
 
+INTROSPECT(category: "hi") struct Name
+{
+  int x;
+  char *y;
+};
+
 enum TOKEN_TYPE {
   TOKEN_TYPE_NULL,
+  TOKEN_TYPE_IDENTIFIER,
+  TOKEN_TYPE_OPEN_PAREN,
+  TOKEN_TYPE_CLOSE_PAREN,
+  TOKEN_TYPE_OPEN_BRACE,
+  TOKEN_TYPE_CLOSE_BRACE,
+  TOKEN_TYPE_OPEN_BRACKET,
+  TOKEN_TYPE_CLOSE_BRACKET,
+  TOKEN_TYPE_COLON,
+  TOKEN_TYPE_STRING,
+  TOKEN_TYPE_ASTERISK,
+  TOKEN_TYPE_SEMICOLON,
+  TOKEN_EOS
 };
 
 struct Token {
@@ -40,20 +58,96 @@ struct TokenArray {
   u32 size;
 };
 
+typedef struct TokenNode TokenNode;
+struct TokenNode {
+  TokenNode *next;
+  Token token;
+};
+
 INTERNAL TokenArray
-lex_token_array(MemArena *arena, String8 s)
+lex_token_array(MemArena *arena, String8 str)
 {
-  TokenArray result = ZERO_STRUCT;
+  Token *first = NULL, *last = NULL;
 
-  TOKEN_TYPE active_token_type = TOKEN_TYPE_NULL;
-  u32 at = 0;
-  u32 offset = 0;
-  while (offset <= s.size) 
+  TOKEN_TYPE token_type = TOKEN_TYPE_NULL;
+  u32 token_start = 0;
+
+  char *at = str.content;
+  while (at[0]) 
   {
-    switch (active_token_type)
+    while (is_whitespace(at[0]))
     {
-
+      at += 1;
     }
+    if (at[0] == '\\' && at[1] == '\\')
+    {
+      at += 2;
+      while (at[0] && at[0] != '\n' && at[0] != '\r')
+      {
+        at += 1;
+      }
+    } 
+    else if (at[0] == '/' && at[1] == '*')
+    {
+      at += 2;
+      while (at[0] && at[0] != '*' && at[1] && at[1] != '/')
+      {
+        at += 1;
+      }
+    }
+
+    u32 token_start = at - str.content;
+    switch (at)
+    {
+      case '\0': { token_type = TOKEN_TYPE_EOS; } break;
+      case '(': { token_type = TOKEN_TYPE_OPEN_PAREN; } break;
+      case ')': { token_type = TOKEN_TYPE_CLOSE_PAREN; } break;
+      case '{': { token_type = TOKEN_TYPE_OPEN_BRACE; } break;
+      case '}': { token_type = TOKEN_TYPE_CLOSE_BRACE; } break;
+      case '[': { token_type = TOKEN_TYPE_OPEN_BRACKET; } break;
+      case ']': { token_type = TOKEN_TYPE_CLOSE_BRACKET; } break;
+      case ';': { token_type = TOKEN_TYPE_SEMICOLON; } break;
+      case ':': { token_type = TOKEN_TYPE_COLON; } break;
+      case '*': { token_type = TOKEN_TYPE_ASTERISK; } break;
+      case '"': 
+      { 
+        token_type = TOKEN_TYPE_STRING; 
+        at += 1;
+        token_start = at - str.content;
+        while (at[0] && at[0] != '"')
+        {
+          if (at[0] == '\\' && at[1])
+          {
+            at += 1;
+          }
+          at += 1;
+        }
+      } break;
+      default:
+      {
+        if (is_alpha(ch))
+        {
+          lex_identifier();
+        }
+        else if (is_numeric(ch))
+        {
+          lex_number();
+        }
+        else
+        {
+          token_type = TOKEN_TYPE_NULL;
+        }
+      } break;
+    }
+
+    u32 token_end = token_start.content - at;
+    TokenNode *token = MEM_ARENA_PUSH_STRUCT(temp_arena, TokenNode);
+    token->type = token_type;
+    token->range = range_u32(token_start, token_end);
+    SLL_QUEUE_PUSH(first, last, token);
+    token_count += 1;
+
+    token_type = TOKEN_TYPE_NULL;
   }
 
   return result;
