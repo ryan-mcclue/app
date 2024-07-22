@@ -252,8 +252,8 @@ elif [[ "$PARAM_MODE" == "release" ]]; then
 fi
 
 # NOTE(Ryan): Metaprogram
-$PARAM_COMPILER ${COMPILER_FLAGS[*]} code/meta.cpp -o build/meta
-./build/meta code/"$NAME".cpp
+$PARAM_COMPILER ${COMPILER_FLAGS[*]} code/meta.cpp -o build/meta-"$PARAM_MODE" ${LINKER_FLAGS[*]}
+./build/meta-"$PARAM_MODE" code/meta.cpp
 exit
 
 # NOTE(Ryan): Hotreloading

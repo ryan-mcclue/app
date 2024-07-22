@@ -48,6 +48,19 @@ struct String8Join
   String8 post;
 };
 
+INTERNAL bool
+is_numeric(char ch)
+{
+  return (ch >= 48 && ch <= 57);
+}
+
+INTERNAL bool
+is_alpha(char ch)
+{
+  ch &= ~0x20;
+  return (ch >= 65 && ch <= 90);
+}
+
 INTERNAL String8
 str8(u8 *str, memory_index size)
 {
@@ -217,7 +230,7 @@ str8_find_substring(String8 str, String8 substring, memory_index start_pos, MATC
 INTERNAL bool
 is_whitespace(char ch)
 {
-  return (ch == ' ' || ch == '\t' || ch == '\v' || ch == '\f');
+  return (ch == ' ' || ch == '\t' || ch == '\v' || ch == '\f' || ch == '\r' || ch == '\n');
 }
 
 INTERNAL String8

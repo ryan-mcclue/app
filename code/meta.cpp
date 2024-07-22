@@ -33,6 +33,7 @@ INTROSPECT(category: "hi") struct Name
 };
 
 enum TOKEN_TYPE {
+  TOKEN_TYPE_EOS,
   TOKEN_TYPE_NULL,
   TOKEN_TYPE_IDENTIFIER,
   TOKEN_TYPE_OPEN_PAREN,
@@ -45,17 +46,11 @@ enum TOKEN_TYPE {
   TOKEN_TYPE_STRING,
   TOKEN_TYPE_ASTERISK,
   TOKEN_TYPE_SEMICOLON,
-  TOKEN_EOS
 };
 
 struct Token {
   TOKEN_TYPE type;
   RangeU32 range;
-};
-
-struct TokenArray {
-  Token *tokens;
-  u32 size;
 };
 
 typedef struct TokenNode TokenNode;
@@ -64,28 +59,47 @@ struct TokenNode {
   Token token;
 };
 
-INTERNAL TokenArray
-lex_token_array(MemArena *arena, String8 str)
+typedef struct TokenArray TokenArray;
+struct TokenArray {
+  Token *tokens;
+  u32 count;
+};
+
+typedef struct Tokeniser Tokeniser;
+struct Tokeniser {
+  String8 f;
+  TokenArray array;
+  u32 at;
+};
+
+INTERNAL Tokeniser
+lex(MemArena *arena, String8 str)
 {
-  Token *first = NULL, *last = NULL;
+  TokenNode *first = NULL, *last = NULL;
+
+  MemArenaTemp temp_arena = mem_arena_temp_begin(NULL, 0);
+  u32 token_count;
 
   TOKEN_TYPE token_type = TOKEN_TYPE_NULL;
   u32 token_start = 0;
+  u32 token_end = 0;
 
-  char *at = str.content;
-  while (at[0]) 
+  u8 *at = str.content;
+  while (at && at[0]) 
   {
     while (is_whitespace(at[0]))
     {
       at += 1;
     }
-    if (at[0] == '\\' && at[1] == '\\')
+    if (at[0] == '/' && at[1] == '/')
     {
       at += 2;
       while (at[0] && at[0] != '\n' && at[0] != '\r')
       {
         at += 1;
       }
+      if (at[0] && (at[0] == '\n' || at[0] == '\r')) at += 1;
+      continue;
     } 
     else if (at[0] == '/' && at[1] == '*')
     {
@@ -94,10 +108,14 @@ lex_token_array(MemArena *arena, String8 str)
       {
         at += 1;
       }
+      continue;
     }
 
-    u32 token_start = at - str.content;
-    switch (at)
+    token_start = at - str.content;
+    token_end = token_start + 1;
+    char ch = at[0];
+    at += 1;
+    switch (ch)
     {
       case '\0': { token_type = TOKEN_TYPE_EOS; } break;
       case '(': { token_type = TOKEN_TYPE_OPEN_PAREN; } break;
@@ -112,27 +130,32 @@ lex_token_array(MemArena *arena, String8 str)
       case '"': 
       { 
         token_type = TOKEN_TYPE_STRING; 
-        at += 1;
         token_start = at - str.content;
         while (at[0] && at[0] != '"')
         {
-          if (at[0] == '\\' && at[1])
-          {
-            at += 1;
-          }
+          if (at[0] == '\\' && at[1]) at += 1;
           at += 1;
         }
+        token_end = at - str.content;
+        if (at[0] == '"') at += 1;
       } break;
       default:
       {
         if (is_alpha(ch))
         {
-          lex_identifier();
+          token_type = TOKEN_TYPE_IDENTIFIER; 
+          while (is_alpha(at[0]) || is_numeric(at[0]) || at[0] == '_')
+          {
+            at += 1;
+          }
+          token_end = at - str.content;
         }
+#if 0
         else if (is_numeric(ch))
         {
           lex_number();
         }
+#endif
         else
         {
           token_type = TOKEN_TYPE_NULL;
@@ -140,17 +163,156 @@ lex_token_array(MemArena *arena, String8 str)
       } break;
     }
 
-    u32 token_end = token_start.content - at;
-    TokenNode *token = MEM_ARENA_PUSH_STRUCT(temp_arena, TokenNode);
-    token->type = token_type;
-    token->range = range_u32(token_start, token_end);
-    SLL_QUEUE_PUSH(first, last, token);
+    TokenNode *token_node = MEM_ARENA_PUSH_STRUCT(temp_arena.arena, TokenNode);
+    token_node->token.type = token_type;
+    token_node->token.range = range_u32(token_start, token_end);
+    SLL_QUEUE_PUSH(first, last, token_node);
     token_count += 1;
 
     token_type = TOKEN_TYPE_NULL;
   }
 
-  return result;
+  TokenArray ta = ZERO_STRUCT;
+  ta.tokens = MEM_ARENA_PUSH_ARRAY(arena, Token, token_count);
+  ta.count = token_count;
+
+  u32 i = 0;
+  for (TokenNode *n = first; n != NULL; n = n->next)
+  {
+    ta.tokens[i++] = n->token;
+  }
+
+  mem_arena_temp_end(temp_arena);
+
+  Tokeniser t = {str, ta, 0};
+  return t;
+}
+
+INTERNAL void
+print_token(String8 f, Token t)
+{
+  switch (t.type)
+  {
+#define CASE(t) case TOKEN_TYPE_##t: printf("TOKEN_TYPE_"#t); break;
+  CASE(NULL)
+  CASE(IDENTIFIER)
+  CASE(OPEN_PAREN)
+  CASE(CLOSE_PAREN)
+  CASE(OPEN_BRACE)
+  CASE(CLOSE_BRACE)
+  CASE(OPEN_BRACKET)
+  CASE(CLOSE_BRACKET)
+  CASE(COLON)
+  CASE(STRING)
+  CASE(ASTERISK)
+  CASE(SEMICOLON)
+  CASE(EOS)
+#undef CASE
+  }
+
+  printf(": %.*s\n", t.range.max - t.range.min, f.content + t.range.min);
+}
+
+INTERNAL bool
+token_equals(String8 f, Token t, String8 m)
+{
+  String8 src = str8(f.content + t.range.min, range_u32_dim(t.range));
+  return str8_match(src, m, 0);
+}
+
+INTERNAL Token
+consume_token(Tokeniser *t)
+{
+  if (t->at + 1 < t->array.count)
+  {
+    t->at += 1;
+    return t->array.tokens[t->at - 1];
+  }
+  else
+  {
+    return ZERO_STRUCT;
+  }
+}
+
+INTERNAL bool
+require_token(Tokeniser *t, TOKEN_TYPE type)
+{
+  Token token = consume_token(t);
+  return (token.type == type);
+}
+
+INTERNAL void
+parse_introspectable_params(Tokeniser *t)
+{
+  while (true)
+  {
+    Token token = consume_token(t);
+    if (token.type == TOKEN_TYPE_CLOSE_PAREN ||
+        token.type == TOKEN_TYPE_EOS) break;
+  }
+}
+
+INTERNAL void
+parse_struct_member(Tokeniser *t, Token member_type_token)
+{
+  while (true)
+  {
+    Token token = consume_token(t);
+    if (token.type == TOKEN_TYPE_IDENTIFIER)
+    {
+      printf("%.*s\n", range_u32_dim(token.range), t->f.content + token.range.min);
+    }
+    else if (token.type == TOKEN_TYPE_SEMICOLON ||
+        token.type == TOKEN_TYPE_EOS) break;
+  }
+}
+
+INTERNAL void
+parse_struct(Tokeniser *t)
+{
+  Token name = consume_token(t);
+  if (require_token(t, TOKEN_TYPE_OPEN_BRACE))
+  {
+    while (true)
+    {
+      Token member_token = consume_token(t);
+      if (member_token.type == TOKEN_TYPE_CLOSE_BRACE ||
+          member_token.type == TOKEN_TYPE_EOS)
+      {
+        break;
+      }
+      else
+      {
+        parse_struct_member(t, member_token);
+      }
+    }
+  }
+  else
+  {
+    WARN("struct requires {");
+  }
+}
+
+INTERNAL void
+parse_introspectable(Tokeniser *t)
+{
+  if (require_token(t, TOKEN_TYPE_OPEN_PAREN))
+  {
+    parse_introspectable_params(t);
+    Token token = consume_token(t);
+    if (token_equals(t->f, token, str8_lit("struct")))
+    {
+      parse_struct(t);
+    }
+    else
+    {
+      WARN("instropect just for structs");
+    }
+  }
+  else
+  {
+    WARN("Require ( after instropect");
+  }
 }
 
 int
@@ -164,9 +326,21 @@ main(int argc, char *argv[])
   thread_context_set(&tctx);
   thread_context_set_name("Main Thread");
 
-  String8 f = str8_read_entire_file(arena, str8_lit("code/app.h"));
+  String8 f = str8_read_entire_file(arena, str8_lit("code/meta-gen.h"));
+  Tokeniser tokeniser = lex(arena, f);
 
-  TokenArray token_array = lex_token_array(arena, f);
+  while (true)
+  {
+    Token t = consume_token(&tokeniser); 
+
+    //print_token(f, t);
+
+    if (t.type == TOKEN_TYPE_EOS) break;
+    else if (token_equals(f, t, str8_lit("introspect")))
+    {
+      parse_introspectable(&tokeniser);
+    }
+  }
 
   return 0;
 }
