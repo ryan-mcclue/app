@@ -26,6 +26,21 @@
 //    return result;
 //}
 
+// IMPORTANT: this is just basic introspect; for full metaprogramming, generate AST and generate from that
+enum META_TYPE
+{
+  meta_type_u32,
+  meta_type_string8,
+  meta_type_f32
+};
+
+struct MemberDefinition
+{
+  META_TYPE type;
+  String8 name;
+  u32 offset;
+};
+
 INTROSPECT(category: "hi") struct Name
 {
   int x;
@@ -67,10 +82,53 @@ struct TokenArray {
 
 typedef struct Tokeniser Tokeniser;
 struct Tokeniser {
+  MemArena *arena;
   String8 f;
   TokenArray array;
   u32 at;
 };
+
+typedef struct MetaStruct MetaStruct;
+struct MetaStruct 
+{
+  String8 name; 
+  MetaStruct *next;
+};
+GLOBAL MetaStruct *first_meta_struct;
+
+#define TOKEN_VARG(f, t) \
+  range_u32_dim(t.range), (f.content + t.range.min)
+
+INTERNAL void
+print_struct(void *struct_ptr, MemberDefinition *defs, Token name_token, u32 count, u32 indent_level)
+{
+  // for (u32 i = 0; i < indent_level; i += 1) output_str[i] = ' ';
+  //printf("%.*s\n", name_token);
+  for (u32 i = 0; i < count; i += 1)
+  {
+    MemberDefinition mb = defs[i]; 
+    void *member_ptr = (u8 *)struct_ptr + mb.offset;
+
+    if (mb.is_pointer)
+    {
+      member_ptr = *(void **)member_ptr;
+    }
+
+    switch (mb.type)
+    {
+      case meta_type_u32:
+      {
+        printf("%s - %u", mb.name, *(* u32)member_ptr);
+      } break;
+      case meta_type_v32:
+      {
+        
+      } break;
+      META_STRUCT_DUMP(member_ptr)
+    }
+  }
+
+}
 
 INTERNAL Tokeniser
 lex(MemArena *arena, String8 str)
@@ -184,7 +242,8 @@ lex(MemArena *arena, String8 str)
 
   mem_arena_temp_end(temp_arena);
 
-  Tokeniser t = {str, ta, 0};
+
+  Tokeniser t = {NULL, str, ta, 0};
   return t;
 }
 
@@ -253,19 +312,30 @@ parse_introspectable_params(Tokeniser *t)
 }
 
 INTERNAL void
-parse_struct_member(Tokeniser *t, Token member_type_token)
+parse_struct_member(Tokeniser *t, Token struct_type, Token member_type)
 {
+  bool is_pointer = false;
   while (true)
   {
     Token token = consume_token(t);
+    if (token.type == TOKEN_TYPE_ASTERISK)
+    {
+      is_pointer = true;
+    }
     if (token.type == TOKEN_TYPE_IDENTIFIER)
     {
-      printf("%.*s\n", range_u32_dim(token.range), t->f.content + token.range.min);
+      printf("    {%s, meta_type_%.*s, \"%.*s\", (uintptr_t)&(((%.*s *)0)->%.*s)}, \n", 
+              is_pointer ? "MEMBER_TYPE_IS_POINTER" : "0",
+              TOKEN_VARG(t->f, member_type),
+              TOKEN_VARG(t->f, token),
+              TOKEN_VARG(t->f, struct_type),
+              TOKEN_VARG(t->f, token));
     }
     else if (token.type == TOKEN_TYPE_SEMICOLON ||
         token.type == TOKEN_TYPE_EOS) break;
   }
 }
+
 
 INTERNAL void
 parse_struct(Tokeniser *t)
@@ -273,6 +343,8 @@ parse_struct(Tokeniser *t)
   Token name = consume_token(t);
   if (require_token(t, TOKEN_TYPE_OPEN_BRACE))
   {
+    printf("GLOBAL MemberDefinition g_members_of_%.*s[] = \n", TOKEN_VARG(t->f, name));
+    printf("{\n");
     while (true)
     {
       Token member_token = consume_token(t);
@@ -283,9 +355,14 @@ parse_struct(Tokeniser *t)
       }
       else
       {
-        parse_struct_member(t, member_token);
+        parse_struct_member(t, name, member_token);
       }
     }
+    printf("};\n");
+
+    MetaStruct *s = MEM_ARENA_PUSH_STRUCT(t->arena, MetaStruct);
+    s->name = str8_fmt(t->arena, "%.*s", TOKEN_VARG(t->f, name));
+    SLL_STACK_PUSH(first_meta_struct, s);
   }
   else
   {
@@ -326,8 +403,9 @@ main(int argc, char *argv[])
   thread_context_set(&tctx);
   thread_context_set_name("Main Thread");
 
-  String8 f = str8_read_entire_file(arena, str8_lit("code/meta-gen.h"));
+  String8 f = str8_read_entire_file(arena, str8_lit("code/meta-test.h"));
   Tokeniser tokeniser = lex(arena, f);
+  tokeniser.arena = arena;
 
   while (true)
   {
@@ -340,6 +418,14 @@ main(int argc, char *argv[])
     {
       parse_introspectable(&tokeniser);
     }
+  }
+
+  printf("#define META_STRUCT_DUMP(member_ptr) \\ \n");
+  for (MetaStruct *s = first_meta_struct; s != NULL; s = s->next)
+  {
+    printf("case meta_type_%.*s: dump_struct(member_ptr, members_of_%.*s, ARRAY_COUNT(members_of_%.*s), indent_level + 1); break; %s\n", 
+            str8_varg(s->name), str8_varg(s->name), str8_varg(s->name), 
+            s->next ? "\\" : "");
   }
 
   return 0;

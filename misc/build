@@ -253,7 +253,7 @@ fi
 
 # NOTE(Ryan): Metaprogram
 $PARAM_COMPILER ${COMPILER_FLAGS[*]} code/meta.cpp -o build/meta-"$PARAM_MODE" ${LINKER_FLAGS[*]}
-./build/meta-"$PARAM_MODE" code/meta.cpp
+./build/meta-"$PARAM_MODE" code/meta.cpp | tee code/meta-gen.h
 exit
 
 # NOTE(Ryan): Hotreloading
