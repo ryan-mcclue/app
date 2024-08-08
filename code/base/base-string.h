@@ -657,6 +657,8 @@ str8_hash(String8 string)
   return result;
 }
 
+
+
 #if 0
 INTERNAL void
 ring_queue_thread(u32 val)

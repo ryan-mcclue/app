@@ -47,7 +47,8 @@ INTROSPECT(category: "hi") struct Name
   char *y;
 };
 
-enum TOKEN_TYPE {
+typedef enum
+{
   TOKEN_TYPE_EOS,
   TOKEN_TYPE_NULL,
   TOKEN_TYPE_IDENTIFIER,
@@ -61,7 +62,7 @@ enum TOKEN_TYPE {
   TOKEN_TYPE_STRING,
   TOKEN_TYPE_ASTERISK,
   TOKEN_TYPE_SEMICOLON,
-};
+} TOKEN_TYPE ;
 
 struct Token {
   TOKEN_TYPE type;
@@ -100,7 +101,7 @@ GLOBAL MetaStruct *first_meta_struct;
   range_u32_dim(t.range), (f.content + t.range.min)
 
 INTERNAL void
-print_struct(void *struct_ptr, MemberDefinition *defs, Token name_token, u32 count, u32 indent_level)
+dump_struct(void *struct_ptr, MemberDefinition *defs, Token name_token, u32 count, u32 indent_level)
 {
   // for (u32 i = 0; i < indent_level; i += 1) output_str[i] = ' ';
   //printf("%.*s\n", name_token);
@@ -430,3 +431,4 @@ main(int argc, char *argv[])
 
   return 0;
 }
+

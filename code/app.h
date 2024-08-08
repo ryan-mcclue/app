@@ -53,11 +53,13 @@ struct MusicFileIndex
     Name##Slot *slots; \
     Name##Node *collection; \
   };
+
 ASSETS_STRUCTS_LIST
 #undef X
 
 #define X(Name, name, names) \
   Name##Assets names; 
+
   typedef struct Assets Assets;
   struct Assets {
     MemArena *arena;

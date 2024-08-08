@@ -162,9 +162,10 @@ f64_neg_inf(void)
 }
 
 
-
 INTERNAL f32 f32_abs(f32 f) { return f < 0.0f ? -f : +f; }
+INTERNAL bool f32_eq(f32 a, f32 b) { return f32_abs(a - b) <= F32_MACHINE_EPSILON; }
 INTERNAL f64 f64_abs(f64 f) { return f < 0.0 ? -f : +f; }
+INTERNAL bool f64_eq(f64 a, f64 b) { return f64_abs(a - b) <= F64_MACHINE_EPSILON; }
 
 typedef struct Handle Handle;
 struct Handle
@@ -265,6 +266,8 @@ struct SourceLoc
 // NOTE(Ryan): Pre-compilation parses annotated structs and writes them to a header file
 #define INTROSPECT(params)
 // INTROSPECT(category:"something") typedef struct ParseThis
+#define COUNTED_POINTER(count)
+// COUNTED_POINTER(10) u32 *array
 
 // NOTE(Ryan): Designated initialisers allow repetition and ZII
 #define draw_rect(r, ...) \

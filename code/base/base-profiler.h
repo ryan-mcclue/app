@@ -3,6 +3,26 @@
 #define BASE_PROFILER_H
 
 #if defined(PROFILER)
+  #if defined(__GNUC_INSTRUMENTATION__)
+    ProfileEphemeral ephemerals[4096];
+    GLOBAL AddressIndexSlot g_address_index_slots;
+    void __cyg_profile_func_enter(void *this_fn, void *call_site) __attribute__((no_instrument_function));
+    void __cyg_profile_func_enter(void *this_fn, void *call_site)
+    {
+      u32 ephemeral_slot = ptr_hash(this_fn) % ARRAY_COUNT(g_ephemerals);
+      ProfileEphemeral *e = g_ephemerals[ephemeral_slot];
+      ASSERT("Hash collision not encountered" && e->addr == this_fn);
+      profile_block_start(ephemeral_slot);
+    }   
+    void __cyg_profile_func_exit(void *this_fn, void *call_site) __attribute__((no_instrument_function));
+    void __cyg_profile_func_exit(void *this_fn, void *call_site)
+    {
+      u32 ephemeral_slot = ptr_hash(this_fn) % ARRAY_COUNT(g_ephemerals);
+      ProfileEphemeral *e = g_ephemerals[ephemeral_slot];
+      profile_block_end(e);
+    }
+ #endif
+
   typedef struct ProfileSlot ProfileSlot;
   struct ProfileSlot
   {
@@ -44,6 +64,8 @@
     for (struct {ProfileEphemeral e; u32 i;} UNIQUE_NAME(l) = {profile_block_start(name, __COUNTER__ + 1, byte_count), 0}; \
          UNIQUE_NAME(l).i == 0; \
          profile_block_end(&(UNIQUE_NAME(l)).e), UNIQUE_NAME(l).i++)
+  #define PROFILE_FUNCTION_BANDWIDTH(byte_count) \
+    PROFILE_BANDWIDTH(__func__, byte_count)
   #define PROFILER_END_OF_COMPILATION_UNIT \
     STATIC_ASSERT(__COUNTER__ <= ARRAY_COUNT(global_profiler.slots));
 
@@ -131,6 +153,7 @@
   #define PROFILE_FUNCTION()
   #define PROFILE_BLOCK(name)
   #define PROFILE_BANDWIDTH(name, byte_count)
+  #define PROFILE_FUNCTION_BANDWIDTH(byte_count)
 
   typedef struct Profiler Profiler;
   struct Profiler

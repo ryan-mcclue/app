@@ -11,7 +11,7 @@ GLOBAL State *g_state = NULL;
       //   - rainbow
       //   - circles
       //   - audio source, e.g. miniaudio microphone, OS mixer etc.  
-      //   - comments for vis. suggestions: https://www.youtube.com/watch?v=1pqIg-Ug7bU&list=PLpM-Dvs8t0Vak1rrE2NJn8XYEJ5M7-BqT&index=7&t=669s 
+      //   - color picker: https://www.youtube.com/playlist?list=PL4MeL-B_nCzy4jpfb2x8UG0-RNaKoFv9U 
       
       
 // 1. convert samples from time to frequency domain
@@ -175,19 +175,30 @@ music_callback(void *buffer, unsigned int frames)
   }
 }
 
-#define DRAW_U32(var) do {\
-  String8 s = str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu32, var); \
-  char text[64] = ZERO_STRUCT; \
-  str8_to_cstr(s, text, sizeof(text)); \
-  DrawText(text, 50, 50, 48, RED); \
-} while (0)
-
-#define DRAW_F32(var) do {\
-  String8 s = str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %f", var); \
-  char text[64] = ZERO_STRUCT; \
-  str8_to_cstr(s, text, sizeof(text)); \
-  DrawText(text, 50, 50, 48, RED); \
-} while (0)
+#define DBG_U32(var) \
+  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu32, var))
+#define DBG_S32(var) \
+  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRId32, var))
+#define DBG_U64(var) \
+  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu64, var))
+#define DBG_S64(var) \
+  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRId64, var))
+#define DBG_F32(var) \
+  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %f", var))
+#define DBG_F64(var) \
+  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %lf", var))
+#define DBG_V2(var) \
+  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = (%f, %f)", var.x, var.y))
+INTERNAL void
+draw_debug_text(String8 text)
+{
+  f32 at_x = 50.f;
+  LOCAL_PERSIST f32 at_y = 50.f;
+  char text[64] = ZERO_STRUCT;
+  str8_to_cstr(s, text, sizeof(text));
+  DrawText(text, at_x, at_y, 48, RED);
+  at_y += 50.f;
+}
 
 INTERNAL void
 fft_render(Rectangle r, f32 *samples, u32 num_samples)
@@ -226,146 +237,6 @@ lerp_color(Color *a, Color *b, f32 t)
 
   return res;
 }
-
-#define ASSETS_NUM_SLOTS 256
-
-// to write generic code in C, just focus on ptr and bytes (void* to u8*)
-// same structure, different ending members
-// require offsetof for padding
-
-INTERNAL void *
-assets_find_(void *slots, String8 key, memory_index slot_size, 
-            memory_index key_offset,
-            memory_index next_offset, 
-            memory_index value_offset)
-{
-  u64 hash = str8_hash(key);
-  u64 slot_i = hash % ASSETS_NUM_SLOTS;
-  u8 *slot = (u8 *)slots + slot_i * slot_size; 
-
-  u8 *first_node = slot;
-  String8 node_key = *(String8 *)(first_node + key_offset);
-  if (str8_match(node_key, key, 0)) return (first_node + value_offset);
-
-  for (u8 *chain_node = (first_node + next_offset);
-       chain_node != NULL; 
-       chain_node = (chain_node + next_offset))
-  {
-    node_key = *(String8 *)(chain_node + key_offset);
-    if (str8_match(node_key, key, 0)) return (u8 *)(chain_node + value_offset);
-  }
-
-  return NULL;
-}
-
-// IMPORTANT(Ryan): View macro parameters as tokens to be expanded, e.g. could be any number of values
-// (u8 *)(&slots[0].first->hash_next) - (u8 *)(&slots[0])
-// NOTE(Ryan): gf2 (ctrl-d for assembly)
-// with optimisations, compiler will determine offsets at compile time
-#define ASSETS_FIND(slots, key) \
-  assets_find_(slots, key, sizeof(*slots), \
-              OFFSET_OF_MEMBER(__typeof__(*slots[0].first), key), \
-              OFFSET_OF_MEMBER(__typeof__(*slots[0].first), hash_chain_next), \
-              OFFSET_OF_MEMBER(__typeof__(*slots[0].first), value))
-
-INTERNAL Font
-assets_get_font(String8 key)
-{
-  Font *p = (Font *)ASSETS_FIND(g_state->assets.fonts.slots, key);
-  if (p != NULL) return *p;
-  else
-  {
-    char cpath[256] = ZERO_STRUCT;
-    str8_to_cstr(key, cpath, sizeof(cpath)); 
-
-    // TODO(Ryan): Add parameters to asset keys
-    Font v = LoadFontEx(cpath, 64, NULL, 0);
-
-    FontNode *n = MEM_ARENA_PUSH_STRUCT(g_state->assets.arena, FontNode);
-    n->key = key;
-    n->value = v;
-
-    u64 slot_i = str8_hash(key) % ASSETS_NUM_SLOTS;
-    FontSlot *s = &g_state->assets.fonts.slots[slot_i];
-    __SLL_QUEUE_PUSH(s->first, s->last, n, hash_chain_next);
-    __SLL_STACK_PUSH(g_state->assets.fonts.collection, n, hash_collection_next);
-
-    return v;
-  }
-}
-
-INTERNAL Image
-assets_get_image(String8 key)
-{
-  Image *p = (Image *)ASSETS_FIND(g_state->assets.images.slots, key);
-  if (p != NULL) return *p;
-  else
-  {
-    char cpath[256] = ZERO_STRUCT;
-    str8_to_cstr(key, cpath, sizeof(cpath)); 
-
-    Image v = LoadImage(cpath);
-
-    ImageNode *n = MEM_ARENA_PUSH_STRUCT(g_state->assets.arena, ImageNode);
-    n->key = key;
-    n->value = v;
-
-    u64 slot_i = str8_hash(key) % ASSETS_NUM_SLOTS;
-    ImageSlot *s = &g_state->assets.images.slots[slot_i];
-    __SLL_QUEUE_PUSH(s->first, s->last, n, hash_chain_next);
-    __SLL_STACK_PUSH(g_state->assets.images.collection, n, hash_collection_next);
-
-    return v;
-  }
-}
-
-INTERNAL Texture
-assets_get_texture(String8 key)
-{
-  Texture *p = (Texture *)ASSETS_FIND(g_state->assets.textures.slots, key);
-  if (p != NULL) return *p;
-  else
-  {
-    Image i = assets_get_image(key);
-    Texture v = LoadTextureFromImage(i);
-    SetTextureFilter(v, TEXTURE_FILTER_BILINEAR);
-
-    TextureNode *n = MEM_ARENA_PUSH_STRUCT(g_state->assets.arena, TextureNode);
-    n->key = key;
-    n->value = v;
-
-    u64 slot_i = str8_hash(key) % ASSETS_NUM_SLOTS;
-    TextureSlot *s = &g_state->assets.textures.slots[slot_i];
-    __SLL_QUEUE_PUSH(s->first, s->last, n, hash_chain_next);
-    __SLL_STACK_PUSH(g_state->assets.textures.collection, n, hash_collection_next);
-
-    return v;
-  }
-}
-
-INTERNAL void
-assets_preload(void)
-{
-#define X(Name, name, names) \
-  for (Name##Node *n = g_state->assets.names.collection; \
-       n != NULL; \
-       n = n->hash_collection_next) \
-  { \
-    Unload##Name(n->value); \
-  } \
-  g_state->assets.names = ZERO_STRUCT;
-
-  ASSETS_STRUCTS_LIST
-#undef X
-
-  mem_arena_clear(g_state->assets.arena);
-#define X(Name, name, names) \
-  g_state->assets.names.slots = MEM_ARENA_PUSH_ARRAY_ZERO(g_state->assets.arena, Name##Slot, ASSETS_NUM_SLOTS);
-
-  ASSETS_STRUCTS_LIST
-#undef X
-}
-
 
 INTERNAL void
 mf_render(Rectangle r)
@@ -698,10 +569,7 @@ app_update(State *state)
       g_state->hann_samples[i] = hann_function(g_state->samples_ring.samples[j], t);
     }
 
-    PROFILE_BANDWIDTH("fft", NUM_SAMPLES * sizeof(f32))
-    {
-      fft(g_state->hann_samples, 1, g_state->fft_samples, NUM_SAMPLES);
-    }
+    fft(g_state->hann_samples, 1, g_state->fft_samples, NUM_SAMPLES);
 
     f32 max_power = 1.0f;
     // NOTE(Ryan): FFT is periodic, so only have to iterate half of fft samples
