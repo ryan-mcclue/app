@@ -7,6 +7,17 @@
 
 State *g_state = NULL;
 
+typedef struct Tweaks Tweaks;
+INTROSPECT() struct Tweaks
+{
+  Color color_bg;
+
+  f32 button_margin;
+  Color button_color;
+  Color button_color_hoverover;
+};
+GLOBAL Tweaks g_tweaks;
+
 #include "desktop-assets.cpp"
 
 EXPORT void 
@@ -118,14 +129,66 @@ f32 max_scroll = (mf_width * g_state->num_mf) - r.width;
 } */
 
 INTERNAL void
-draw_slider(Rectangle region)
+draw_volume_slider(Rectangle boundary)
 {
-  f32 base_w = region.width * 0.8f;
-  Rectangle slider_r = {region.x, region.y, base_w, region.height * 0.8f};
+  Vector2 mouse_pos = GetMousePosition();
+  // TODO: draw a single button; the slider is next to it on hover
+  f32 base_w = boundary.width * 0.2f;
+  f32 h = boundary.height * 0.8f;
+  Rectangle slider_r = {boundary.x + boundary.x * g_tweaks.button_margin, 
+                        boundary.y + boundary.y * g_tweaks.button_margin, 
+                        base_w, h};
 
   LOCAL_PERSIST b32 expanded = false;
+  LOCAL_PERSIST f32 value = 0.f;
+  LOCAL_PERSIST b32 dragging = false;
 
-  DrawRectangleRounded(slider_r, 0.5, 20, GREEN);
+  Color c = g_tweaks.button_color;
+  expanded = dragging || CheckCollisionPointRec(mouse_pos, slider_r);
+  if (expanded)
+  {
+    slider_r.width *= 5.f;
+    c = g_tweaks.button_color_hoverover;
+  }
+  DrawRectangleRounded(slider_r, 0.5, 20, c);
+
+  if (expanded)
+  {
+    // draw horizontal slider
+    Rectangle r = {slider_r.x + slider_r.x*g_tweaks.button_margin,
+                   slider_r.y, 
+                   slider_r.width - slider_r.width * 0.2f,
+                   slider_r.height};
+    Vector2 slider_start = {r.x, r.y + r.height*.5f}; 
+    Vector2 slider_end = {r.x + r.width, r.y + r.height*.5f};
+    DrawLineEx(slider_start, slider_end, r.height*0.15f, GREEN);
+
+    f32 radius = r.height*0.25f;
+    Vector2 slider_circle =  {slider_start.x + (slider_end.x - slider_start.x)*value, slider_start.y};
+    DrawCircleV(slider_circle, radius, GREEN);
+
+    b32 slider_circle_hover = CheckCollisionPointCircle(mouse_pos, slider_circle, radius);
+    if (!dragging)
+    {
+      if (slider_circle_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+      {
+        dragging = true; 
+      }
+    }
+    else
+    {
+      if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) dragging = false;
+
+      //f32 value = GetMasterVolume();
+
+      f32 x = CLAMP(slider_start.x, mouse_pos.x, slider_end.x);
+      x -= slider_start.x;
+      x /= (slider_end.x - slider_start.x);
+      value = x;
+
+      // SetMasterVolume()
+    }
+  }
 }
 
 INTERNAL MusicFile *
@@ -211,6 +274,11 @@ code_update(State *state)
   if (!state->is_initialised)
   {
     state->is_initialised = true;
+
+    g_tweaks.color_bg = {120, 200, 22, 255};
+    g_tweaks.button_margin = 0.05f;
+    g_tweaks.button_color = {200, 100, 10, 255};
+    g_tweaks.button_color_hoverover = ColorBrightness(g_tweaks.button_color, 0.15);
   }
 
   if (IsKeyPressed(KEY_F)) 
@@ -220,7 +288,7 @@ code_update(State *state)
   }
 
   BeginDrawing();
-  ClearBackground(RAYWHITE);
+  ClearBackground(g_tweaks.color_bg);
 
   if (Vector2Length(GetMouseDelta()) > 0.0f)
   {
@@ -330,10 +398,13 @@ code_update(State *state)
   fft_render(fft_region, state->draw_samples, num_bins);
 
   Vector2 cc = {rw*.5f,rh*.5f};
+  // specify segments to get a 'cleaner' circle than default
   DrawCircleSector(cc, cc.x*.2f, 0, 360, 69, RED);
   DrawCircleSector(cc, cc.x*.18f, 0, 360, 30, WHITE);
 
-  draw_slider({rw*.2f, rh*.2f, rw*.5f, rh*.1f});
+  Rectangle slider_region = {rw*.2f, rh*.2f, rw*.5f, rh*.1f};
+  DrawRectangleRec(slider_region, {255, 10, 20, 255});
+  draw_volume_slider(slider_region);
 
 /*f32 btn_w = 100.f;
   f32 btn_margin = 10.f;
@@ -350,6 +421,7 @@ code_update(State *state)
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
+
 
 
 
