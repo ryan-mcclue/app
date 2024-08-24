@@ -18,6 +18,8 @@ INTROSPECT() struct Tweaks
 };
 GLOBAL Tweaks g_tweaks;
 
+GLOBAL u64 g_active_button_id;
+
 #include "desktop-assets.cpp"
 
 EXPORT void 
@@ -127,6 +129,182 @@ f32 max_scroll = (mf_width * g_state->num_mf) - r.width;
     i += 1;
   }
 } */
+
+typedef struct ButtonState ButtonState;
+struct ButtonState
+{
+  b32 clicked;
+}; 
+
+// need id's for UI so can have concept of 'active' element 
+// to prevent click down on one button and release on another triggering it
+
+// IMPORTANT: GetCollisionRec(panel, item)
+// this computes the intersection of two rectangles
+// useful for BeginScissorMode()
+// also, hash(base_id, &i, sizeof(i))
+
+// IMPORTANT: to overcome collisions, have an optional parameter id to be passed in to base hash off  
+
+static void snap_segment_inside_other_segment(float ls, float rs, float *lt, float *rt)
+{
+    float dt = *rt - *lt;
+    if (rs < *lt || rs < *rt) {
+        *rt = rs;
+        *lt = rs - dt;
+    }
+
+    if (*lt < ls || *rt < ls) {
+        *lt = ls;
+        *rt = ls + dt;
+    }
+}
+
+static void snap_boundary_inside_screen(Rectangle *boundary)
+{
+    float ls = 0;
+    float rs = GetScreenWidth();
+    float ts = 0;
+    float bs = GetScreenHeight();
+
+    float lt = boundary->x;
+    float rt = boundary->x + boundary->width;
+    float tt = boundary->y;
+    float bt = boundary->y + boundary->height;
+
+    snap_segment_inside_other_segment(ls, rs, &lt, &rt);
+    snap_segment_inside_other_segment(ts, bs, &tt, &bt);
+
+    boundary->x = lt;
+    boundary->y = tt;
+    boundary->width = rt - lt;
+    boundary->height = bt - tt;
+}
+
+ 
+INTERNAL void 
+align_to_side_of_rect(Rectangle who, Rectangle *what, Side where)
+{
+    switch (where) {
+        case SIDE_BOTTOM: {
+            float cx = who.x + who.width/2;
+            float cy = who.y + who.height + TOOLTIP_PADDING;
+            what->x = cx - what->width/2;
+            what->y = cy;
+        } break;
+
+        case SIDE_TOP: {
+            float cx = who.x + who.width/2;
+            float cy = who.y - TOOLTIP_PADDING - what->height;
+            what->x = cx - what->width/2;
+            what->y = cy;
+        } break;
+
+        case SIDE_RIGHT: {
+            float cx = who.x + who.width + TOOLTIP_PADDING;
+            float cy = who.y + who.height/2;
+            what->x = cx;
+            what->y = cy - what->height/2;
+        } break;
+
+        case SIDE_LEFT: {
+            float cx = who.x - TOOLTIP_PADDING - what->width;
+            float cy = who.y + who.height/2;
+            what->x = cx;
+            what->y = cy - what->height/2;
+        } break;
+
+        default: {
+            assert(0 && "unreachable");
+        }
+    }
+}
+
+
+INTERNAL void 
+draw_active_tooltip(void)
+{
+  if (!g_state->active_tooltip) return;
+
+  float fontSize = 30;
+  float spacing = 0.0;
+  Vector2 margin = {20.0, 10.0};
+  Vector2 text_size = MeasureTextEx(p->font, p->tooltip_buffer, fontSize, spacing);
+
+  Rectangle tooltip_boundary = {
+      .width = text_size.x + margin.x * 2.0,
+      .height = text_size.y + margin.y * 2.0,
+  };
+
+  align_to_side_of_rect(p->tooltip_element_boundary, &tooltip_boundary, p->tooltip_align);
+  snap_boundary_inside_screen(&tooltip_boundary);
+
+  DrawRectangleRounded(tooltip_boundary, 0.4, 20, COLOR_TOOLTIP_BACKGROUND);
+  Vector2 position = {
+      .x = tooltip_boundary.x + tooltip_boundary.width / 2 - text_size.x / 2,
+      .y = tooltip_boundary.y + tooltip_boundary.height / 2 - text_size.y / 2,
+  };
+  DrawTextEx(p->font, p->tooltip_buffer, position, fontSize, spacing, COLOR_TOOLTIP_FOREGROUND);
+}
+
+
+INTERNAL void 
+queue_draw_tooltip(Rectangle boundary, const char *text, Side align, bool persists)
+{
+    if (!(CheckCollisionPointRec(GetMousePosition(), boundary) || persists)) return;
+
+    g_state->active_tooltip = true;
+    snprintf(g_state->tooltip_buffer, sizeof(g_state->tooltip_buffer), "%s", text);
+    g_state->tooltip_align = align;
+    g_state->tooltip_element_boundary = boundary;
+}
+
+tooltip(slider_boundary, TextFormat("Volume %d%%", (int)floorf(volume*100.0f)), 
+        SIDE_TOP, dragging);
+
+
+
+#define draw_button(boundary) \
+  draw_button_with_location(__FILE__, __LINE__, boundary)
+
+INTERNAL ButtonState
+draw_button_with_location(const char *file, u32 line, Rectangle boundary)
+{
+  u64 seed = hash_ptr(file);
+  u64 id = hash_data(seed, &line, sizeof(line));
+
+  // tooltip(boundary, "Render [R]", SIDE_TOP, false);
+
+  return draw_button_with_id(id, boundary);
+}
+
+INTERNAL ButtonState
+draw_button_with_id(u64 id, Rectangle boundary)
+{
+  Vector2 mouse = GetMousePosition();
+  b32 hovering = CheckCollisionPointRec(mouse, boundary);
+  b32 clicked = false;
+
+  // all inactive
+  if (g_active_button_id == 0 && hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+  {
+    g_active_button_id = id;
+  }
+  // we are active
+  else if (g_active_button_id == id)
+  {
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+    {
+      g_active_button_id = 0;
+      if (hovering)
+      {
+        clicked = true;
+      }
+    }
+  }
+
+  return {clicked};
+}
 
 INTERNAL void
 draw_volume_slider(Rectangle boundary)
@@ -415,12 +593,16 @@ code_update(State *state)
     state->fullscreen_fft ^= 1;
   } */
 
+  draw_queued_tooltip();
+  g_state->tooltip_queued = false;
+
   g_dbg_at_y = 0.f;
   EndDrawing();
   }
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
+
 
 
 
