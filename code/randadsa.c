@@ -244,6 +244,13 @@ align_rect(Rectangle target, Vector2 size, RECT_ALIGN side)
       result.x = x;
       result.y = y - size.y*.5f;
     } break;
+    case RA_CENTRE:
+    {
+      f32 x = target.x + target.width*.5f - size.x*.5f;
+      f32 y = target.y + target.height*.5f - size.y*.5f;
+      result.x = x;
+      result.y = y;
+    } break;
   }
   return result;
 }
@@ -326,6 +333,35 @@ draw_button_with_location(char *file, u32 line, Rectangle boundary)
 }
 
 
+// state->red_slider = draw_slider(r, "Red: ", state->red_slider);
+// state->red = draw_slider(r, "Red: ", state->red, &state->red_dragging)
+
+/* 
+INTERNAL Rectangle
+cut_rect_left(Rectangle r, f32 t)
+cut_rect_middle(Rectangle r, f32 t0, f32 t1)
+
+
+INTERNAL COLOUR_PICKER_MODE
+draw_mode()
+{
+  // char *hex_text = TextFormat("%02x%02x%02x%02x", value);
+  // SetClipboardText(hex_text)
+  // mode += 1 if LEFT_DOWN, -1 if RIGHT_DOWN over status
+}
+
+
+INTERNAL f32
+draw_slider(Rectangle boundary, const char *label, f32 value, b32 *dragging)
+{
+  Rectangle lr = boundary, sr = boundary, vr = boundary;
+  char *value_text = TextFormat("%0.02f", value);
+
+  // ColorFromNormalized(state->red_slider.value, state->green)
+
+  return value;
+} */
+
 INTERNAL void
 draw_volume_slider(Rectangle boundary)
 {
@@ -383,6 +419,10 @@ draw_volume_slider(Rectangle boundary)
       x -= slider_start.x;
       x /= (slider_end.x - slider_start.x);
       value = x;
+
+      f32 wheel = GetMouseWheelMove();
+      value += (4.f * wheel / boundary.width);
+      value = CLAMP01(value);
 
       // SetMasterVolume()
     }
@@ -611,6 +651,7 @@ code_update(State *state)
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
+
 
 
 
