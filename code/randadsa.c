@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: zlib-acknowledgement
 #if !TEST_BUILD
 #define PROFILER 1
 #endif
@@ -15,6 +14,8 @@ INTROSPECT() struct Tweaks
   f32 button_margin;
   Color button_color;
   Color button_color_hoverover;
+  Color tooltip_color_bg;
+  Color tooltip_color_fg;
 };
 GLOBAL Tweaks g_tweaks;
 
@@ -22,9 +23,33 @@ GLOBAL u64 g_active_button_id;
 
 #include "desktop-assets.cpp"
 
+INTERNAL void 
+music_callback(void *buffer, unsigned int frames)
+{
+  // NOTE(Ryan): Don't overwrite buffer on this run
+  if (frames >= NUM_SAMPLES) frames = NUM_SAMPLES - 1;
+
+  // NOTE(Ryan): Raylib normalises to f32 stereo for all sources
+  f32 *norm_buf = (f32 *)buffer;
+  for (u32 i = 0; i < frames * 2; i += 2)
+  {
+    f32 left = norm_buf[i];
+    f32 right = norm_buf[i + 1];
+
+    g_state->samples_ring.samples[g_state->samples_ring.head] = MAX(left, right);
+    g_state->samples_ring.head = (g_state->samples_ring.head + 1) % NUM_SAMPLES;
+  }
+}
+
 EXPORT void 
 code_preload(State *state)
 {
+  MusicFile *active = DEREF_MUSIC_FILE_HANDLE(state->active_music_handle);
+  if (!ZERO_MUSIC_FILE(active)) 
+  {
+    DetachAudioStreamProcessor(active->music.stream, music_callback);
+  }
+
   profiler_init();
   
   assets_preload(state);
@@ -32,7 +57,13 @@ code_preload(State *state)
 
 EXPORT void 
 code_postload(State *state)
-{}
+{
+  MusicFile *active = DEREF_MUSIC_FILE_HANDLE(state->active_music_handle);
+  if (!ZERO_MUSIC_FILE(active)) 
+  {
+    AttachAudioStreamProcessor(active->music.stream, music_callback);
+  }
+}
 
 EXPORT void
 code_profiler_end_and_print(State *state)
@@ -146,136 +177,108 @@ struct ButtonState
 
 // IMPORTANT: to overcome collisions, have an optional parameter id to be passed in to base hash off  
 
-static void snap_segment_inside_other_segment(float ls, float rs, float *lt, float *rt)
+INTERNAL Vector2
+snap_line_inside_other(Vector2 a, Vector2 b)
 {
-    float dt = *rt - *lt;
-    if (rs < *lt || rs < *rt) {
-        *rt = rs;
-        *lt = rs - dt;
-    }
+  Vector2 result = {b.x, b.y};
 
-    if (*lt < ls || *rt < ls) {
-        *lt = ls;
-        *rt = ls + dt;
-    }
+  f32 dt = b.y - b.x;
+  if (result.x > a.y || result.y > a.y)
+  {
+    result.x = a.y - dt; 
+    result.y = a.y;
+  }
+
+  if (result.x < a.x || result.y < a.x)
+  {
+    result.x = b.x;
+    result.y = b.x + dt;
+  }
+
+  return result;
 }
 
-static void snap_boundary_inside_screen(Rectangle *boundary)
+INTERNAL Rectangle 
+snap_rect_inside_render(Rectangle boundary)
 {
-    float ls = 0;
-    float rs = GetScreenWidth();
-    float ts = 0;
-    float bs = GetScreenHeight();
+  Vector2 x = snap_line_inside_other({0, GetRenderWidth()}, {boundary.x, boundary.x + boundary.width});
+  Vector2 y = snap_line_inside_other({0, GetRenderHeight()}, {boundary.y, boundary.y + boundary.height});
 
-    float lt = boundary->x;
-    float rt = boundary->x + boundary->width;
-    float tt = boundary->y;
-    float bt = boundary->y + boundary->height;
-
-    snap_segment_inside_other_segment(ls, rs, &lt, &rt);
-    snap_segment_inside_other_segment(ts, bs, &tt, &bt);
-
-    boundary->x = lt;
-    boundary->y = tt;
-    boundary->width = rt - lt;
-    boundary->height = bt - tt;
+  f32 w = x.y - x.x;
+  f32 h = y.y - y.x;
+  return {x.x, y.x, w, h};
 }
 
- 
-INTERNAL void 
-align_to_side_of_rect(Rectangle who, Rectangle *what, Side where)
+INTERNAL Rectangle 
+align_rect(Rectangle target, Vector2 size, RECT_ALIGN side)
 {
-    switch (where) {
-        case SIDE_BOTTOM: {
-            float cx = who.x + who.width/2;
-            float cy = who.y + who.height + TOOLTIP_PADDING;
-            what->x = cx - what->width/2;
-            what->y = cy;
-        } break;
-
-        case SIDE_TOP: {
-            float cx = who.x + who.width/2;
-            float cy = who.y - TOOLTIP_PADDING - what->height;
-            what->x = cx - what->width/2;
-            what->y = cy;
-        } break;
-
-        case SIDE_RIGHT: {
-            float cx = who.x + who.width + TOOLTIP_PADDING;
-            float cy = who.y + who.height/2;
-            what->x = cx;
-            what->y = cy - what->height/2;
-        } break;
-
-        case SIDE_LEFT: {
-            float cx = who.x - TOOLTIP_PADDING - what->width;
-            float cy = who.y + who.height/2;
-            what->x = cx;
-            what->y = cy - what->height/2;
-        } break;
-
-        default: {
-            assert(0 && "unreachable");
-        }
-    }
+  Rectangle result = {target.x, target.y, size.x, size.y};
+  switch (side)
+  {
+    default: { return result; }
+    case RA_BOTTOM:
+    {
+      f32 x = target.x + target.width*.5f;
+      f32 y = target.y + target.height;
+      result.x = x - size.x*.5f;
+      result.y = y;
+    } break;
+    case RA_TOP:
+    {
+      f32 x = target.x + target.width*.5f;
+      f32 y = target.y - size.y;
+      result.x = x - size.x*.5f;
+      result.y = y;
+    } break;
+    case RA_RIGHT:
+    {
+      f32 x = target.x + target.width;
+      f32 y = target.y + target.height*.5f;
+      result.x = x;
+      result.y = y - size.y*.5f;
+    } break;
+    case RA_LEFT:
+    {
+      f32 x = target.x - size.x;
+      f32 y = target.y + target.height*.5f;
+      result.x = x;
+      result.y = y - size.y*.5f;
+    } break;
+  }
+  return result;
 }
 
 
 INTERNAL void 
-draw_active_tooltip(void)
+draw_queued_tooltip(void)
 {
-  if (!g_state->active_tooltip) return;
+  if (!g_state->tooltip_queued) return;
 
-  float fontSize = 30;
-  float spacing = 0.0;
-  Vector2 margin = {20.0, 10.0};
-  Vector2 text_size = MeasureTextEx(p->font, p->tooltip_buffer, fontSize, spacing);
+  f32 font_size = g_state->font.baseSize * 0.75f;
+  Vector2 text_size = MeasureTextEx(g_state->font, g_state->tooltip_buffer, font_size, 0.f);
+  Vector2 margin = {font_size*0.5f, font_size*0.1f};
 
-  Rectangle tooltip_boundary = {
-      .width = text_size.x + margin.x * 2.0,
-      .height = text_size.y + margin.y * 2.0,
-  };
+  Vector2 size = {text_size.x + margin.x*2.f, text_size.y + margin.y*2.f};
+  Rectangle tooltip_boundary = align_rect(g_state->tooltip_element_boundary, size, g_state->tooltip_align);
+  Rectangle tooltip_rect = snap_rect_inside_render(tooltip_boundary);
 
-  align_to_side_of_rect(p->tooltip_element_boundary, &tooltip_boundary, p->tooltip_align);
-  snap_boundary_inside_screen(&tooltip_boundary);
-
-  DrawRectangleRounded(tooltip_boundary, 0.4, 20, COLOR_TOOLTIP_BACKGROUND);
-  Vector2 position = {
-      .x = tooltip_boundary.x + tooltip_boundary.width / 2 - text_size.x / 2,
-      .y = tooltip_boundary.y + tooltip_boundary.height / 2 - text_size.y / 2,
-  };
-  DrawTextEx(p->font, p->tooltip_buffer, position, fontSize, spacing, COLOR_TOOLTIP_FOREGROUND);
+  DrawRectangleRounded(tooltip_rect, 0.4, 20, g_tweaks.tooltip_color_bg);
+  Vector2 position = {tooltip_rect.x + tooltip_rect.width*.5f - text_size.x*.5f,
+                      tooltip_rect.y + tooltip_rect.height*.5f - text_size.y*.5f};
+  DrawTextEx(g_state->font, g_state->tooltip_buffer, position, font_size, 0.f, g_tweaks.tooltip_color_fg);
+  
+  g_state->tooltip_queued = false;
 }
 
-
-INTERNAL void 
-queue_draw_tooltip(Rectangle boundary, const char *text, Side align, bool persists)
+INTERNAL void
+queue_draw_tooltip_on_hover(Rectangle boundary, const char *text, RECT_ALIGN align, b32 persists)
 {
-    if (!(CheckCollisionPointRec(GetMousePosition(), boundary) || persists)) return;
+  if (!(CheckCollisionPointRec(GetMousePosition(), boundary) || persists)) return;
 
-    g_state->active_tooltip = true;
-    snprintf(g_state->tooltip_buffer, sizeof(g_state->tooltip_buffer), "%s", text);
-    g_state->tooltip_align = align;
-    g_state->tooltip_element_boundary = boundary;
-}
-
-tooltip(slider_boundary, TextFormat("Volume %d%%", (int)floorf(volume*100.0f)), 
-        SIDE_TOP, dragging);
-
-
-
-#define draw_button(boundary) \
-  draw_button_with_location(__FILE__, __LINE__, boundary)
-
-INTERNAL ButtonState
-draw_button_with_location(const char *file, u32 line, Rectangle boundary)
-{
-  u64 seed = hash_ptr(file);
-  u64 id = hash_data(seed, &line, sizeof(line));
-
-  // tooltip(boundary, "Render [R]", SIDE_TOP, false);
-
-  return draw_button_with_id(id, boundary);
+  g_state->tooltip_queued = true;
+  snprintf(g_state->tooltip_buffer, sizeof(g_state->tooltip_buffer), "%s", text);
+  g_state->tooltip_align = align;
+  g_state->tooltip_element_boundary = boundary;
 }
 
 INTERNAL ButtonState
@@ -303,8 +306,25 @@ draw_button_with_id(u64 id, Rectangle boundary)
     }
   }
 
+  DrawRectangleRec(boundary, g_tweaks.button_color);
+
   return {clicked};
 }
+
+#define draw_button(boundary) \
+  draw_button_with_location(__FILE__, __LINE__, boundary)
+
+INTERNAL ButtonState
+draw_button_with_location(char *file, u32 line, Rectangle boundary)
+{
+  u64 seed = hash_ptr(file);
+  u64 id = hash_data(seed, &line, sizeof(line));
+
+  queue_draw_tooltip_on_hover(boundary, "Render [RR]", RA_TOP, false);
+
+  return draw_button_with_id(id, boundary);
+}
+
 
 INTERNAL void
 draw_volume_slider(Rectangle boundary)
@@ -395,23 +415,6 @@ dealloc_music_file(MusicFile *m)
   m->is_active = false;
 }
 
-INTERNAL void 
-music_callback(void *buffer, unsigned int frames)
-{
-  // NOTE(Ryan): Don't overwrite buffer on this run
-  if (frames >= NUM_SAMPLES) frames = NUM_SAMPLES - 1;
-
-  // NOTE(Ryan): Raylib normalises to f32 stereo for all sources
-  f32 *norm_buf = (f32 *)buffer;
-  for (u32 i = 0; i < frames * 2; i += 2)
-  {
-    f32 left = norm_buf[i];
-    f32 right = norm_buf[i + 1];
-
-    g_state->samples_ring.samples[g_state->samples_ring.head] = MAX(left, right);
-    g_state->samples_ring.head = (g_state->samples_ring.head + 1) % NUM_SAMPLES;
-  }
-}
 
 INTERNAL void
 fft_render(Rectangle r, f32 *samples, u32 num_samples)
@@ -449,14 +452,17 @@ code_update(State *state)
   u32 rw = GetRenderWidth();
   u32 rh = GetRenderHeight();
 
+  g_tweaks.color_bg = {120, 200, 22, 255};
+  g_tweaks.button_margin = 0.05f;
+  g_tweaks.button_color = {200, 100, 10, 255};
+  g_tweaks.button_color_hoverover = ColorBrightness(g_tweaks.button_color, 0.15);
+  g_tweaks.tooltip_color_bg = {0, 50, 200, 255};
+  g_tweaks.tooltip_color_fg = {230, 230, 230, 255};
+  state->font = assets_get_font(str8_lit("assets/Alegreya-Regular.ttf"));
+
   if (!state->is_initialised)
   {
     state->is_initialised = true;
-
-    g_tweaks.color_bg = {120, 200, 22, 255};
-    g_tweaks.button_margin = 0.05f;
-    g_tweaks.button_color = {200, 100, 10, 255};
-    g_tweaks.button_color_hoverover = ColorBrightness(g_tweaks.button_color, 0.15);
   }
 
   if (IsKeyPressed(KEY_F)) 
@@ -575,6 +581,7 @@ code_update(State *state)
   Rectangle fft_region = {0.0f, 0.0f, (f32)rw, fft_h};
   fft_render(fft_region, state->draw_samples, num_bins);
 
+
   Vector2 cc = {rw*.5f,rh*.5f};
   // specify segments to get a 'cleaner' circle than default
   DrawCircleSector(cc, cc.x*.2f, 0, 360, 69, RED);
@@ -583,6 +590,9 @@ code_update(State *state)
   Rectangle slider_region = {rw*.2f, rh*.2f, rw*.5f, rh*.1f};
   DrawRectangleRec(slider_region, {255, 10, 20, 255});
   draw_volume_slider(slider_region);
+
+  Rectangle r = {800, 800, 200, 200};
+  draw_button(r);
 
 /*f32 btn_w = 100.f;
   f32 btn_margin = 10.f;
@@ -594,7 +604,6 @@ code_update(State *state)
   } */
 
   draw_queued_tooltip();
-  g_state->tooltip_queued = false;
 
   g_dbg_at_y = 0.f;
   EndDrawing();
@@ -602,6 +611,7 @@ code_update(State *state)
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
+
 
 
 
