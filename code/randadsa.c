@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: zlib-acknowledgement
 #if !TEST_BUILD
 #define PROFILER 1
 #endif
@@ -6,18 +7,14 @@
 
 State *g_state = NULL;
 
-typedef struct Tweaks Tweaks;
-INTROSPECT() struct Tweaks
-{
-  Color color_bg;
+#define COLOR_BG {120, 200, 22, 255}
+#define BUTTON_MARGIN 0.05f
+#define BUTTON_COLOR {200, 100, 10, 255}
+#define BUTTON_COLOR_HOVEROVER ColorBrightness(BUTTON_COLOR, 0.15)
+#define TOOLTIP_COLOR_BG {0, 50, 200, 255}
+#define TOOLTIP_COLOR_FG {230, 230, 230, 255}
 
-  f32 button_margin;
-  Color button_color;
-  Color button_color_hoverover;
-  Color tooltip_color_bg;
-  Color tooltip_color_fg;
-};
-GLOBAL Tweaks g_tweaks;
+#define Z_FFT 1
 
 GLOBAL u64 g_active_button_id;
 
@@ -269,10 +266,10 @@ draw_queued_tooltip(void)
   Rectangle tooltip_boundary = align_rect(g_state->tooltip_element_boundary, size, g_state->tooltip_align);
   Rectangle tooltip_rect = snap_rect_inside_render(tooltip_boundary);
 
-  DrawRectangleRounded(tooltip_rect, 0.4, 20, g_tweaks.tooltip_color_bg);
+  DrawRectangleRounded(tooltip_rect, 0.4, 20, TOOLTIP_COLOR_BG);
   Vector2 position = {tooltip_rect.x + tooltip_rect.width*.5f - text_size.x*.5f,
                       tooltip_rect.y + tooltip_rect.height*.5f - text_size.y*.5f};
-  DrawTextEx(g_state->font, g_state->tooltip_buffer, position, font_size, 0.f, g_tweaks.tooltip_color_fg);
+  DrawTextEx(g_state->font, g_state->tooltip_buffer, position, font_size, 0.f, TOOLTIP_COLOR_FG);
   
   g_state->tooltip_queued = false;
 }
@@ -313,7 +310,7 @@ draw_button_with_id(u64 id, Rectangle boundary)
     }
   }
 
-  DrawRectangleRec(boundary, g_tweaks.button_color);
+  DrawRectangleRec(boundary, BUTTON_COLOR);
 
   return {clicked};
 }
@@ -369,27 +366,27 @@ draw_volume_slider(Rectangle boundary)
   // TODO: draw a single button; the slider is next to it on hover
   f32 base_w = boundary.width * 0.2f;
   f32 h = boundary.height * 0.8f;
-  Rectangle slider_r = {boundary.x + boundary.x * g_tweaks.button_margin, 
-                        boundary.y + boundary.y * g_tweaks.button_margin, 
+  Rectangle slider_r = {boundary.x + boundary.x * BUTTON_MARGIN, 
+                        boundary.y + boundary.y * BUTTON_MARGIN, 
                         base_w, h};
 
   LOCAL_PERSIST b32 expanded = false;
   LOCAL_PERSIST f32 value = 0.f;
   LOCAL_PERSIST b32 dragging = false;
 
-  Color c = g_tweaks.button_color;
+  Color c = BUTTON_COLOR;
   expanded = dragging || CheckCollisionPointRec(mouse_pos, slider_r);
   if (expanded)
   {
     slider_r.width *= 5.f;
-    c = g_tweaks.button_color_hoverover;
+    c = BUTTON_COLOR_HOVEROVER;
   }
   DrawRectangleRounded(slider_r, 0.5, 20, c);
 
   if (expanded)
   {
     // draw horizontal slider
-    Rectangle r = {slider_r.x + slider_r.x*g_tweaks.button_margin,
+    Rectangle r = {slider_r.x + slider_r.x*BUTTON_MARGIN,
                    slider_r.y, 
                    slider_r.width - slider_r.width * 0.2f,
                    slider_r.height};
@@ -455,6 +452,100 @@ dealloc_music_file(MusicFile *m)
   m->is_active = false;
 }
 
+INTERNAL void
+push_z(s32 z)
+{
+  S32Node *n = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, S32Node);
+  n->value = z;
+  SLL_STACK_PUSH(g_state->z_stack, n);
+}
+
+INTERNAL void
+pop_z(void)
+{
+  SLL_STACK_POP(g_state->z_stack);
+}
+
+INTERNAL void
+push_rect(Rectangle r, Color c)
+{
+  RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
+  re->z = g_state->z_stack->value;
+  re->colour = c;
+
+  re->type = RE_RECT;
+  re->rec = r;
+  SLL_STACK_PUSH(g_state->render_element_stack, re);
+  g_state->render_element_stack_count += 1;
+}
+
+INTERNAL void
+push_text(String8 s, Font f, Vector2 p, Color c)
+{
+  RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
+  re->z = g_state->z_stack->value;
+  re->colour = c;
+
+  re->text = MEM_ARENA_PUSH_ARRAY(g_state->frame_arena, char, s.size + 1);
+  str8_to_cstr(s, re->text, s.size + 1);
+  SLL_STACK_PUSH(g_state->render_element_stack, re);
+  g_state->render_element_stack_count += 1;
+}
+
+INTERNAL void
+push_texture(Texture t, Vector2 p, f32 scale, Color c)
+{
+
+}
+
+INTERNAL int
+render_element_quick_sort_compare(RenderSortElement *a, RenderSortElement *b)
+{
+  return (a->z - b->z);
+}
+
+INTERNAL void
+render(void)
+{
+  RenderSortElement *sort_array = MEM_ARENA_PUSH_ARRAY(g_state->frame_arena, RenderSortElement, g_state->render_element_stack_count);
+  u32 j = 0;
+  for (RenderElement *re = g_state->render_element_stack; re != NULL; re = re->next)
+  {
+    RenderSortElement *s = &sort_array[j];
+    s->z = re->z;
+    s->element = re;
+    j += 1;
+  }
+
+  QUICK_SORT(sort_array, RenderSortElement, g_state->render_element_stack_count, render_element_quick_sort_compare);
+
+  for (u32 i = 0; i < g_state->render_element_stack_count; i += 1)
+  {
+    RenderSortElement *rs = &sort_array[i];
+    RenderElement *re = rs->element;
+    switch (re->type)
+    {
+      default: {} break;
+      case RE_RECT:
+      {
+        DrawRectangleRec(re->rec, re->colour);
+      } break;
+/*       case RE_TEXT:
+      {
+        DrawTextEx(g_state->font, g_state->tooltip_buffer, position, font_size, 0.f, TOOLTIP_COLOR_FG);
+      } break;
+      case RE_TEXTURE:
+      {
+        DrawTextureEx();
+      } break; */
+    }
+  }
+
+  g_state->render_element_stack = NULL;
+  g_state->render_element_stack_count = 0;
+  g_state->z_stack = NULL;
+}
+
 
 INTERNAL void
 fft_render(Rectangle r, f32 *samples, u32 num_samples)
@@ -492,13 +583,8 @@ code_update(State *state)
   u32 rw = GetRenderWidth();
   u32 rh = GetRenderHeight();
 
-  g_tweaks.color_bg = {120, 200, 22, 255};
-  g_tweaks.button_margin = 0.05f;
-  g_tweaks.button_color = {200, 100, 10, 255};
-  g_tweaks.button_color_hoverover = ColorBrightness(g_tweaks.button_color, 0.15);
-  g_tweaks.tooltip_color_bg = {0, 50, 200, 255};
-  g_tweaks.tooltip_color_fg = {230, 230, 230, 255};
   state->font = assets_get_font(str8_lit("assets/Alegreya-Regular.ttf"));
+  push_z(0);
 
   if (!state->is_initialised)
   {
@@ -512,7 +598,7 @@ code_update(State *state)
   }
 
   BeginDrawing();
-  ClearBackground(g_tweaks.color_bg);
+  ClearBackground(COLOR_BG);
 
   if (Vector2Length(GetMouseDelta()) > 0.0f)
   {
@@ -621,7 +707,6 @@ code_update(State *state)
   Rectangle fft_region = {0.0f, 0.0f, (f32)rw, fft_h};
   fft_render(fft_region, state->draw_samples, num_bins);
 
-
   Vector2 cc = {rw*.5f,rh*.5f};
   // specify segments to get a 'cleaner' circle than default
   DrawCircleSector(cc, cc.x*.2f, 0, 360, 69, RED);
@@ -645,13 +730,19 @@ code_update(State *state)
 
   draw_queued_tooltip();
 
+  push_z(100);
+  push_rect(r, MAGENTA);
+  push_z(120);
+  push_rect(r, YELLOW);
+
+  render();
+
   g_dbg_at_y = 0.f;
   EndDrawing();
   }
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
-
 
 
 
