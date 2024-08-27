@@ -139,15 +139,30 @@ push_z_layer(Z_LAYER z)
   n->value = z;
   SLL_STACK_PUSH(g_state->z_layer_stack, n);
 }
-
 INTERNAL void
 pop_z_layer(void)
 {
   SLL_STACK_POP(g_state->z_layer_stack);
 }
-
 #define Z_SCOPE(z) \
   DEFER_LOOP(push_z_layer(z), pop_z_layer())
+
+
+INTERNAL void
+push_alpha(f32 a)
+{
+  AlphaNode *n = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, AlphaNode);
+  n->value = a;
+  SLL_STACK_PUSH(g_state->alpha_stack, n);
+}
+INTERNAL void
+pop_alpha(void)
+{
+  SLL_STACK_POP(g_state->alpha_stack);
+}
+#define ALPHA_SCOPE(a) \
+  DEFER_LOOP(push_alpha(a), pop_alpha())
+
 
 INTERNAL void
 push_rect(Rectangle r, Color c)
@@ -155,11 +170,11 @@ push_rect(Rectangle r, Color c)
   RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
   re->type = RE_RECT;
   re->z = g_state->z_layer_stack->value;
-  re->colour = c;
+  re->colour = {c.r, c.g, c.b, c.a * g_state->alpha_stack->value};
 
   re->rec = r;
-  SLL_STACK_PUSH(g_state->render_element_stack, re);
-  g_state->render_element_stack_count += 1;
+  SLL_QUEUE_PUSH(g_state->render_element_first, g_state->render_element_last, re);
+  g_state->render_element_queue_count += 1;
 }
 
 INTERNAL void
@@ -168,15 +183,15 @@ push_text(const char *s, Font f, f32 font_size, Vector2 p, Color c)
   RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
   re->type = RE_TEXT;
   re->z = g_state->z_layer_stack->value;
-  re->colour = c;
+  re->colour = {c.r, c.g, c.b, c.a * g_state->alpha_stack->value};
 
   re->font = f;
   re->font_size = font_size;
   re->rec = {p.x, p.y, 0.f, 0.f};
   re->text = MEM_ARENA_PUSH_ARRAY(g_state->frame_arena, char, strlen(s) + 1);
   MEMORY_COPY(re->text, s, strlen(s)+1);
-  SLL_STACK_PUSH(g_state->render_element_stack, re);
-  g_state->render_element_stack_count += 1;
+  SLL_QUEUE_PUSH(g_state->render_element_first, g_state->render_element_last, re);
+  g_state->render_element_queue_count += 1;
 }
 
 INTERNAL void
@@ -202,9 +217,9 @@ render_element_quick_sort_compare(RenderSortElement *a, RenderSortElement *b)
 INTERNAL void
 render_elements(void)
 {
-  RenderSortElement *sort_array = MEM_ARENA_PUSH_ARRAY(g_state->frame_arena, RenderSortElement, g_state->render_element_stack_count);
+  RenderSortElement *sort_array = MEM_ARENA_PUSH_ARRAY(g_state->frame_arena, RenderSortElement, g_state->render_element_queue_count);
   u32 j = 0;
-  for (RenderElement *re = g_state->render_element_stack; re != NULL; re = re->next)
+  for (RenderElement *re = g_state->render_element_first; re != NULL; re = re->next)
   {
     RenderSortElement *s = &sort_array[j];
     s->z = re->z;
@@ -212,15 +227,15 @@ render_elements(void)
     j += 1;
   }
 
-  QUICK_SORT(sort_array, RenderSortElement, g_state->render_element_stack_count, render_element_quick_sort_compare);
+  QUICK_SORT(sort_array, RenderSortElement, g_state->render_element_queue_count, render_element_quick_sort_compare);
 
-  for (u32 i = 0; i < g_state->render_element_stack_count; i += 1)
+  for (u32 i = 0; i < g_state->render_element_queue_count; i += 1)
   {
     RenderSortElement *rs = &sort_array[i];
     RenderElement *re = rs->element;
     switch (re->type)
     {
-      default: {} break;
+      default: { ASSERT("Drawing nil type" && 0); } break;
       case RE_RECT:
       {
         DrawRectangleRec(re->rec, re->colour);
@@ -236,9 +251,11 @@ render_elements(void)
     }
   }
 
-  g_state->render_element_stack = NULL;
-  g_state->render_element_stack_count = 0;
+  g_state->render_element_first = NULL;
+  g_state->render_element_last = NULL;
+  g_state->render_element_queue_count = 0;
   g_state->z_layer_stack = NULL;
+  g_state->alpha_stack = NULL;
 }
 
 INTERNAL b32
@@ -254,8 +271,6 @@ consume_left_click(void)
   if (g_state->left_click_consumed) return false;
   else return (g_state->left_click_consumed = IsMouseButtonReleased(MOUSE_BUTTON_LEFT));
 }
-
-
 
 
 INTERNAL void 
@@ -481,24 +496,133 @@ draw_button_with_location(char *file, u32 line, Rectangle boundary)
 // state->red_slider = draw_slider(r, "Red: ", state->red_slider);
 // state->red = draw_slider(r, "Red: ", state->red, &state->red_dragging)
 
-
 /* 
+begin()
+{
+ //- rjf: prune all of the stale boxes
+ for(U64 slot = 0; slot < ui_state->box_table_size; slot += 1)
+ {
+  for(UI_Box *box = ui_state->box_table[slot].first, *next = 0;
+      !UI_BoxIsNil(box);
+      box = next)
+  {
+   next = box->hash_next;
+   if(UI_KeyMatch(box->key, UI_KeyZero()) || box->last_gen_touched+1 < ui_state->build_gen)
+   {
+    DLLRemove_NPZ(ui_state->box_table[slot].first, ui_state->box_table[slot].last, box, hash_next, hash_prev, UI_BoxIsNil, UI_BoxSetNil);
+    StackPush(ui_state->first_free_box, box);
+    ui_state->free_box_list_count += 1;
+   }
+  }
+ }
+}
+   Box (active_t, hot_t, opacity, key, hashlinks)
+    TODO: opacity is dealt globally like z index with push_opacity()
+   hot if hover and pressed, active if just hover
+   if(ev_key_is_mouse && ev_in_box_interaction_region && ev->kind == UI_EventKind_Press)
+   {
+    taken = 1;
+    ui_state->hot_key = ui_state->active_key[ev_mb_slot] = box->key;
+    sig.flags |= UI_SignalFlag_PressedLeft<<ev_mb_slot;
+    ui_state->drag_start_mouse = ev->pos_2f32;
+   }
+
+
+root_function void
+UI_AnimateRoot(UI_Box *root, F32 delta_time)
+{
+ //- rjf: calculate animation rates
+ F32 slow_rate = 1 - Pow(2.f, -20.f * delta_time);
+ F32 fast_rate = 1 - Pow(2.f, -50.f * delta_time);
+ 
+ //- rjf: animate all boxes
+ for(U64 slot = 0; slot < ui_state->box_table_size; slot += 1)
+ {
+  for(UI_Box *box = ui_state->box_table[slot].first; !UI_BoxIsNil(box); box = box->hash_next)
+  {
+   B32 is_hot          = UI_KeyMatch(ui_state->hot_key, box->key);
+   B32 is_active       = UI_KeyMatch(ui_state->active_key[UI_MouseButtonSlot_Left], box->key);
+   B32 is_disabled     = !!(box->flags & UI_BoxFlag_Disabled);
+   B32 is_focus_hot    = !!(box->flags & UI_BoxFlag_FocusHot)    && !(box->flags & UI_BoxFlag_FocusHotDisabled);
+   B32 is_focus_active = !!(box->flags & UI_BoxFlag_FocusActive) && !(box->flags & UI_BoxFlag_FocusActiveDisabled);
+   box->hot_t              += ((F32)!!is_hot    - box->hot_t)                  * fast_rate;
+   box->active_t           += ((F32)!!is_active - box->active_t)               * fast_rate;
+   box->disabled_t         += ((F32)!!is_disabled - box->disabled_t)           * fast_rate;
+   box->focus_hot_t        += ((F32)!!is_focus_hot - box->focus_hot_t)         * fast_rate;
+   box->focus_active_t     += ((F32)!!is_focus_active - box->focus_active_t)   * fast_rate;
+   box->view_off.x         += (box->target_view_off.x - box->view_off.x)       * fast_rate;
+   box->view_off.y         += (box->target_view_off.y - box->view_off.y)       * fast_rate;
+   if(AbsoluteValueF32(box->view_off.x - box->target_view_off.x) <= 1)
+   {
+    box->view_off.x = box->target_view_off.x;
+   }
+   if(AbsoluteValueF32(box->view_off.y - box->target_view_off.y) <= 1)
+   {
+    box->view_off.y = box->target_view_off.y;
+   }
+  }
+ }
+}
+draw_boxes()
+
+
+
+
+
+    for(U_WUINode *node = u_state->dev_wui_slots[idx].first; node != 0; node = node->hash_next)
+    {
+     B32 is_hot    = U_WUIKeyMatch(node->key, u_state->dev_wui_hot_key);
+     B32 is_active = U_WUIKeyMatch(node->key, u_state->dev_wui_active_key[UI_MouseButtonSlot_Left]);
+     node->hot_t    += rate * ((F32)!!is_hot - node->hot_t);
+     node->active_t += rate * ((F32)!!is_active - node->active_t);
+    }
+
+
+
+
 INTERNAL COLOUR_PICKER_MODE
 draw_mode()
 {
   // char *hex_text = TextFormat("%02x%02x%02x%02x", value);
-  // SetClipboardText(hex_text)
+  // SetClipboardText(hex_text) if LEFT_DOWN over hex_text (if right str8_to_int(GetClipboardText()))
   // mode += 1 if LEFT_DOWN, -1 if RIGHT_DOWN over status
+}
+
+INTERNAL void
+draw_color_circle(void)
+{
+  if (MODE_HSV)
+  {
+    Vector3 hsv = ColorToHSV(g_state->active_color);
+    Color c = {hsv.x / 360.f, hsv.y, hsv.z, g_state->active_color.a};
+    DrawCircleSector(cc, cc.x*.2f, 0, 360, 69, c);
+  }
+
 }
 
 
 INTERNAL f32
-draw_slider(Rectangle boundary, const char *label, f32 value, b32 *dragging)
+draw_slider(Rectangle boundary, COLOR_MODE mode, f32 value, b32 *dragging, Colour c)
 {
   Rectangle lr = boundary, sr = boundary, vr = boundary;
-  char *value_text = TextFormat("%0.02f", value);
+  char *value_text = TextFormat("%0.02f", mode_string(mode));
+  char *s[COLOR_MODE_NUM][3] = { {"R", "G", "B"}, {"H", "S", "V"} };
 
   // ColorFromNormalized(state->red_slider.value, state->green)
+
+  Rectangle r = align_rect(slider_dial, {8, 8}, RA_TOP);
+  // counter clockwise
+  DrawTriangle({r.x + r.width, r.y + r.height}, {}, {});
+
+  DrawRectangleRounded(x, x + v);
+  DrawRectangleRounded(x + v, w);
+
+  Color color_left = c;
+  Color color_right = c;
+  color_left.e[color_component] = 0;
+  color_right.e[color_component] = 255;
+  DrawRectangleGradientEx(left, color_left, color_left, color, color);
+  DrawRectangleGradientEx(right, color, color, color_right, color_right);
 
   return value;
 } */
@@ -596,17 +720,28 @@ dealloc_music_file(MusicFile *m)
   m->is_active = false;
 }
 
-
 INTERNAL void
 draw_scrollbar(Rectangle r)
 {
-  for (u32 i = 0; i < g_state->num_music_files; i += 1)
+  push_rect(r, BLUE);
+  f32 at_y = r.y + 10.f;
+  for (u32 i = 0; i < ARRAY_COUNT(g_state->music_files); i += 1)
   {
-    
+    MusicFile *m = &g_state->music_files[i];
+    if (!m->is_active)
+      continue;
+    push_text(m->file_name, g_state->font, 30.f, {r.x + 10.f, at_y}, WHITE);
+    at_y += 50.f;
   }
+}
 // IMPORTANT: GetCollisionRec(panel, item)
 // this computes the intersection of two rectangles
 // useful for BeginScissorMode()
+
+INTERNAL void
+draw_color_picker(Rectangle r)
+{
+  push_rect(r, ORANGE);
 }
 
 INTERNAL void
@@ -646,7 +781,6 @@ code_update(State *state)
   u32 rh = GetRenderHeight();
 
   state->font = assets_get_font(str8_lit("assets/Alegreya-Regular.ttf"));
-  push_z_layer(Z_LAYER_NIL);
 
   if (!state->is_initialised)
   {
@@ -661,6 +795,9 @@ code_update(State *state)
 
   BeginDrawing();
   ClearBackground(COLOR_BG);
+
+  push_z_layer(Z_LAYER_NIL);
+  push_alpha(1.0f);
 
   if (Vector2Length(GetMouseDelta()) > 0.0f)
   {
@@ -679,6 +816,8 @@ code_update(State *state)
       else
       {
         MusicFile *m = alloc_music_file();
+        strncpy(m->file_name, GetFileName(path), sizeof(m->file_name));
+
         m->music = music;
         if (i == 0)
         {
@@ -786,207 +925,3 @@ code_update(State *state)
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
-
-#if !defined(DESKTOP_H)
-#define DESKTOP_H
-
-#include "base/base-inc.h"
-#include "desktop-assets.h"
-#include <raylib.h>
-#include <raymath.h>
-
-#define V2(x, y) CCOMPOUND(Vector2){(f32)x, (f32)y}
-#if defined(LANG_CPP)
-INTERNAL Vector2 operator*(Vector2 a, Vector2 b) { return Vector2Multiply(a, b); }
-INTERNAL Vector2 operator*(f32 s, Vector2 a) { return Vector2Scale(a, s); }
-INTERNAL Vector2 operator*(Vector2 a, f32 s) { return Vector2Scale(a, s); }
-INTERNAL Vector2 & operator*=(Vector2 &a, f32 s) { a = a * s; return a; } 
-
-INTERNAL Vector2 operator+(f32 b, Vector2 a) { return Vector2AddValue(a, b); }
-INTERNAL Vector2 operator+(Vector2 a, f32 b) { return Vector2AddValue(a, b); }
-INTERNAL Vector2 operator+(Vector2 a, Vector2 b) { return Vector2Add(a, b); }
-INTERNAL Vector2 & operator+=(Vector2 &a, Vector2 b) { a = a + b; return a; }
-
-INTERNAL Vector2 operator-(f32 b, Vector2 a) { return Vector2SubtractValue(a, b); }
-INTERNAL Vector2 operator-(Vector2 a, f32 b) { return Vector2SubtractValue(a, b); }
-INTERNAL Vector2 operator-(Vector2 a, Vector2 b) { return Vector2Subtract(a, b); }
-INTERNAL Vector2 & operator-=(Vector2 &a, Vector2 b) { a = a - b; return a; }
-INTERNAL Vector2 operator-(Vector2 a) { return Vector2Negate(a); }
-
-INTERNAL bool operator==(Vector2 a, Vector2 b) { return f32_eq(a.x, b.x) && f32_eq(a.y, b.y); }
-INTERNAL bool operator!=(Vector2 a, Vector2 b) { return !(a == b); }
-#endif
-
-typedef struct MusicFile MusicFile;
-struct MusicFile
-{
-  bool is_active;
-  Music music;
-  u64 gen;
-};
-GLOBAL MusicFile g_zero_music_file;
-#define DEREF_MUSIC_FILE_HANDLE(h) \
-  (((h.addr) == NULL || (h.gen != ((MusicFile *)(h.addr))->gen)) ? &g_zero_music_file : (MusicFile *)(h.addr))
-#define ZERO_MUSIC_FILE(ptr) \
-  (ptr == &g_zero_music_file) 
-#define MAX_MUSIC_FILES 64
-
-// IMPORTANT(Ryan): The number of samples limits number of frequencies we can derive
-// This seems to be a good number for a decent visualisation
-// Also, as displaying logarithmically, we don't actually have this large number
-#define NUM_SAMPLES (1 << 13) 
-STATIC_ASSERT(IS_POW2(NUM_SAMPLES));
-#define HALF_SAMPLES (NUM_SAMPLES >> 1)
-struct SampleRing
-{
-  f32 samples[NUM_SAMPLES];
-  u32 head;
-};
-
-typedef enum
-{
-  RA_NIL = 0,
-  RA_TOP,
-  RA_RIGHT,
-  RA_BOTTOM,
-  RA_LEFT,
-  RA_CENTRE
-} RECT_ALIGN;
-
-typedef enum
-{
-  RE_NIL = 0,
-  RE_RECT,
-  RE_TEXT,
-  RE_TEXTURE,
-  RE_CIRCLE
-} RENDER_ELEMENT_TYPE;
-
-typedef enum
-{
-  Z_LAYER_NIL = 0,
-  Z_LAYER_FFT,
-  Z_LAYER_TOOLTIP_BG,
-  Z_LAYER_TOOLTIP_FG,
-} Z_LAYER;
-
-typedef struct RenderElement RenderElement;
-struct RenderElement
-{
-  RENDER_ELEMENT_TYPE type;
-
-  RenderElement *next;
-
-  Z_LAYER z;
-  Color colour;
-
-  Rectangle rec;
-
-  Font font;
-  f32 font_size;
-  char *text;
-
-  Texture texture;
-  f32 scale;
-};
-
-
-typedef struct RenderSortElement RenderSortElement;
-struct RenderSortElement
-{
-  Z_LAYER z;
-  RenderElement *element;
-};
-
-typedef struct ZLayerNode ZLayerNode; 
-struct ZLayerNode
-{
-  ZLayerNode *next;
-  Z_LAYER value;
-};
-
-typedef struct State State;
-INTROSPECT() struct State
-{
-  b32 is_initialised;
-
-  Assets assets;
-
-  MemArena *arena;
-  MemArena *frame_arena;
-  u64 frame_counter;
-
-  Font font;
-
-  b32 hover_consumed;
-  b32 left_click_consumed;
-
-  ZLayerNode *z_layer_stack;
-  RenderElement *render_element_stack;
-  u32 render_element_stack_count;
-
-  MusicFile music_files[MAX_MUSIC_FILES];
-  Handle active_music_handle;
-
-  SampleRing samples_ring;
-  f32 hann_samples[NUM_SAMPLES];
-  f32z fft_samples[NUM_SAMPLES];
-  f32 draw_samples[HALF_SAMPLES];
-
-  f32 mouse_last_moved_time;
-  f32 mf_scroll_velocity;
-  f32 mf_scroll;
-};
-
-typedef void (*code_preload_t)(State *s);
-typedef void (*code_update_t)(State *s);
-typedef void (*code_postload_t)(State *s);
-typedef void (*code_profiler_end_and_print_t)(State *s);
-
-typedef struct ReloadCode ReloadCode;
-struct ReloadCode
-{
-  code_preload_t preload;
-  code_update_t update;
-  code_postload_t postload;
-  code_profiler_end_and_print_t profiler_end_and_print;
-};
-
-GLOBAL f32 g_dbg_at_y;
-extern State *g_state; 
-INTERNAL void
-draw_debug_text(String8 s)
-{
-  char text[64] = ZERO_STRUCT;
-  str8_to_cstr(s, text, sizeof(text));
-  DrawText(text, 50.f, g_dbg_at_y, 48, RED);
-  g_dbg_at_y += 50.f;
-}
-#if DEBUG_BUILD
-#define DBG_U32(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu32, var))
-#define DBG_S32(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRId32, var))
-#define DBG_U64(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu64, var))
-#define DBG_S64(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRId64, var))
-#define DBG_F32(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %f", var))
-#define DBG_F64(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %lf", var))
-#define DBG_V2(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = (%f, %f)", var.x, var.y))
-#else
-#define DBG_U32(var)
-#define DBG_S32(var)
-#define DBG_U64(var)
-#define DBG_S64(var)
-#define DBG_F32(var)
-#define DBG_F64(var)
-#define DBG_V2(var)
-#endif
-
-
-#endif
-
