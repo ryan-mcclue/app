@@ -88,10 +88,10 @@ snap_line_inside_other(Vector2 a, Vector2 b)
   return result;
 }
 INTERNAL Rectangle 
-snap_rect_inside_render(Rectangle boundary)
+snap_rect_inside_render(Rectangle region)
 {
-  Vector2 x = snap_line_inside_other({0, GetRenderWidth()}, {boundary.x, boundary.x + boundary.width});
-  Vector2 y = snap_line_inside_other({0, GetRenderHeight()}, {boundary.y, boundary.y + boundary.height});
+  Vector2 x = snap_line_inside_other({0, GetRenderWidth()}, {region.x, region.x + region.width});
+  Vector2 y = snap_line_inside_other({0, GetRenderHeight()}, {region.y, region.y + region.height});
 
   f32 w = x.y - x.x;
   f32 h = y.y - y.x;
@@ -173,6 +173,21 @@ pop_alpha(void)
 }
 #define ALPHA_SCOPE(a) \
   DEFER_LOOP(push_alpha(a), pop_alpha())
+
+INTERNAL void
+push_mouse_cursor(MouseCursor m)
+{
+  MouseCursorNode *n = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, MouseCursorNode);
+  n->value = m;
+  SLL_STACK_PUSH(g_state->mouse_cursor_stack, n);
+}
+INTERNAL void
+pop_mouse_cursor(void)
+{
+  SLL_STACK_POP(g_state->mouse_cursor_stack);
+}
+#define MOUSE_CURSOR_SCOPE(m) \
+  DEFER_LOOP(push_mouse_cursor(m), pop_mouse_cursor())
 
 
 INTERNAL void
@@ -273,6 +288,8 @@ merge_sort_render_elements(RenderSortElement *entries, u32 count, RenderSortElem
 INTERNAL void
 render_elements(void)
 {
+  SetMouseCursor(g_state->mouse_cursor_stack->value);
+
   RenderSortElement *sort_array = MEM_ARENA_PUSH_ARRAY(g_state->frame_arena, RenderSortElement, g_state->render_element_queue_count);
   RenderSortElement *sort_array_temp = MEM_ARENA_PUSH_ARRAY(g_state->frame_arena, RenderSortElement, g_state->render_element_queue_count);
   u32 j = 0;
@@ -313,6 +330,7 @@ render_elements(void)
   g_state->render_element_queue_count = 0;
   g_state->z_layer_stack = NULL;
   g_state->alpha_stack = NULL;
+  g_state->mouse_cursor_stack = NULL;
 }
 
 INTERNAL b32
@@ -468,11 +486,12 @@ f32 max_scroll = (mf_width * g_state->num_mf) - r.width;
   }
 } */
 
-typedef struct ButtonState ButtonState;
-struct ButtonState
+typedef enum 
 {
-  b32 clicked;
-}; 
+  BS_NIL = 0,
+  BS_HOVERING = 1 << 0,
+  BS_CLICKED = 1 << 1,
+} BUTTON_STATE; 
 
 // also, hash(base_id, &i, sizeof(i))
 
@@ -480,49 +499,42 @@ struct ButtonState
 // have an optional parameter id to be passed in to base hash off  
 
 INTERNAL void 
-draw_tooltip_on_hover(Rectangle boundary, const char *text, RECT_ALIGN align)
+draw_tooltip(Rectangle region, const char *text, RECT_ALIGN align)
 {
-  if (!consume_hover(boundary)) return;
-
   f32 font_size = g_state->font.baseSize * 0.75f;
   Vector2 text_size = MeasureTextEx(g_state->font, text, font_size, 0.f);
   Vector2 margin = {font_size*0.5f, font_size*0.1f};
 
   Vector2 size = {text_size.x + margin.x*2.f, text_size.y + margin.y*2.f};
-  Rectangle tooltip_boundary = align_rect(boundary, size, align);
+  Rectangle tooltip_boundary = align_rect(region, size, align);
   Rectangle tooltip_rect = snap_rect_inside_render(tooltip_boundary);
 
-  Z_SCOPE(Z_LAYER_TOOLTIP_BG)
+  Z_SCOPE(Z_LAYER_TOOLTIP)
   {
     // DrawRectangleRounded(tooltip_rect, 0.4, 20, TOOLTIP_COLOR_BG);
     push_rect(tooltip_rect, COLOR_BG0);
-    Z_SCOPE(Z_LAYER_TOOLTIP_FG)
-    {
-      Vector2 position = {tooltip_rect.x + tooltip_rect.width * .5f - text_size.x * .5f,
-                          tooltip_rect.y + tooltip_rect.height * .5f - text_size.y * .5f};
-      push_text(text, g_state->font, font_size, position, TOOLTIP_COLOR_FG);
-    }
+    Vector2 position = {tooltip_rect.x + tooltip_rect.width * .5f - text_size.x * .5f,
+                        tooltip_rect.y + tooltip_rect.height * .5f - text_size.y * .5f};
+    push_text(text, g_state->font, font_size, position, TOOLTIP_COLOR_FG);
   }
 }
 
-INTERNAL ButtonState
-draw_button_with_id(u64 id, Rectangle boundary)
+INTERNAL BUTTON_STATE
+draw_button_with_id(u64 id, Rectangle region, const char *label, Color c)
 {
   Vector2 mouse = GetMousePosition();
-  b32 hovering = CheckCollisionPointRec(mouse, boundary);
+  b32 hovering = CheckCollisionPointRec(mouse, region);
   b32 clicked = false;
 
-  // all inactive
-  if (g_active_button_id == 0 && hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+  if (g_state->active_button_id == 0 && hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
   {
-    g_active_button_id = id;
+    g_state->active_button_id = id;
   }
-  // we are active
-  else if (g_active_button_id == id)
+  else if (g_state->active_button_id == id)
   {
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
     {
-      g_active_button_id = 0;
+      g_state->active_button_id = 0;
       if (hovering)
       {
         clicked = true;
@@ -530,23 +542,35 @@ draw_button_with_id(u64 id, Rectangle boundary)
     }
   }
 
-  DrawRectangleRec(boundary, BUTTON_COLOR);
+  if (hovering) 
+  {
+    c = ColorBrightness(c, 0.2);
+    push_mouse_cursor(MOUSE_CURSOR_POINTING_HAND);
 
-  return {clicked};
+  }
+
+  f32 font_size = region.height * 0.45f;
+  Vector2 label_dim = MeasureTextEx(g_state->font, label, font_size, 0.f);
+  Vector2 label_margin = {font_size*0.5f, font_size*0.1f};
+  Vector2 label_size = {label_dim.x + label_margin.x*2.f, label_dim.y + label_margin.y*2.f};
+  Rectangle label_rect = align_rect(region, label_size, RA_CENTRE);
+  push_rect(region, c);
+  push_text(label, g_state->font, font_size, {label_rect.x, label_rect.y}, WHITE);
+
+  u32 mask = !!hovering | (!!clicked << 1);
+  return (BUTTON_STATE)mask;
 }
 
-#define draw_button(boundary) \
-  draw_button_with_location(__FILE__, __LINE__, boundary)
+#define draw_button(region, label, color) \
+  draw_button_with_location(__LINE__, region, label, color)
 
-INTERNAL ButtonState
-draw_button_with_location(char *file, u32 line, Rectangle boundary)
+INTERNAL BUTTON_STATE
+draw_button_with_location(u32 line, Rectangle region, const char *label, Color c)
 {
-  u64 seed = hash_ptr(file);
+  u64 seed = hash_ptr(label);
   u64 id = hash_data(seed, &line, sizeof(line));
 
-  draw_tooltip_on_hover(boundary, "Render [RR]", RA_TOP);
-
-  return draw_button_with_id(id, boundary);
+  return draw_button_with_id(id, region, label, c);
 }
 
 
@@ -659,9 +683,9 @@ draw_color_circle(void)
 
 
 INTERNAL f32
-draw_slider(Rectangle boundary, COLOR_MODE mode, f32 value, b32 *dragging, Colour c)
+draw_slider(Rectangle region, COLOR_MODE mode, f32 value, b32 *dragging, Colour c)
 {
-  Rectangle lr = boundary, sr = boundary, vr = boundary;
+  Rectangle lr = region, sr = region, vr = region;
   char *value_text = TextFormat("%0.02f", mode_string(mode));
   char *s[COLOR_MODE_NUM][3] = { {"R", "G", "B"}, {"H", "S", "V"} };
 
@@ -685,14 +709,14 @@ draw_slider(Rectangle boundary, COLOR_MODE mode, f32 value, b32 *dragging, Colou
 } */
 
 INTERNAL void
-draw_volume_slider(Rectangle boundary)
+draw_volume_slider(Rectangle region)
 {
   Vector2 mouse_pos = GetMousePosition();
   // TODO: draw a single button; the slider is next to it on hover
-  f32 base_w = boundary.width * 0.2f;
-  f32 h = boundary.height * 0.8f;
-  Rectangle slider_r = {boundary.x + boundary.x * BUTTON_MARGIN, 
-                        boundary.y + boundary.y * BUTTON_MARGIN, 
+  f32 base_w = region.width * 0.2f;
+  f32 h = region.height * 0.8f;
+  Rectangle slider_r = {region.x + region.x * BUTTON_MARGIN, 
+                        region.y + region.y * BUTTON_MARGIN, 
                         base_w, h};
 
   LOCAL_PERSIST b32 expanded = false;
@@ -743,7 +767,7 @@ draw_volume_slider(Rectangle boundary)
       value = x;
 
       f32 wheel = GetMouseWheelMove();
-      value += (4.f * wheel / boundary.width);
+      value += (4.f * wheel / region.width);
       value = CLAMP01(value);
 
       // SetMasterVolume()
@@ -782,23 +806,36 @@ draw_scroll_region(Rectangle r)
 {
   push_rect(r, COLOR_BG1);
 
-  f32 music_file_size_h = r.width * 0.2f;
-  f32 padding = music_file_size_h * 0.1f;
-  f32 music_file_w = r.width - padding*2.f;
-  f32 music_file_h = music_file_size_h - padding*2.f;
+  f32 btn_padding = r.width * 0.05f;
+  f32 btn_w = r.width - btn_padding*2.f;
+  f32 btn_h = r.height * 0.1f;
 
-  f32 at_y = r.y + 10.f;
+  MusicFile *active = DEREF_MUSIC_FILE_HANDLE(g_state->active_music_handle);
   for (u32 i = 0; i < ARRAY_COUNT(g_state->music_files); i += 1)
   {
     MusicFile *m = &g_state->music_files[i];
     if (!m->is_active) continue;
 
-    Rectangle music_file_r = {r.x + padding, 
-                              r.y + i*music_file_size_h + padding,
-                              music_file_w,
-                              music_file_h};
-    push_rect(music_file_r, COLOR_RED_ACCENT);
-    push_text(m->file_name, g_state->font, 30.f, {music_file_r.x, music_file_r.y}, WHITE);
+    Color c = COLOR_BLUE_ACCENT;
+    if (m == active) 
+    {
+      c = COLOR_CYAN_ACCENT;
+    }
+
+    Rectangle btn_r = {r.x + btn_padding, 
+                       r.y + btn_padding + i*(btn_h + btn_padding),
+                       btn_w, btn_h};
+    
+    BUTTON_STATE bs = draw_button(btn_r, m->file_name, c);
+    if (bs & BS_CLICKED)
+    {
+      g_state->active_music_handle = TO_HANDLE(m);
+    } else if (bs & BS_HOVERING)
+    {
+      String8 s = str8_fmt(g_state->frame_arena, "%f", GetMusicTimeLength(m->music));
+      draw_tooltip(btn_r, (const char *)s.content, RA_RIGHT);
+    }
+
   }
 
   //f32 font_size = g_state->font.baseSize * (r.width / r.height);
@@ -894,6 +931,7 @@ code_update(State *state)
 
   push_z_layer(Z_LAYER_NIL);
   push_alpha(1.0f);
+  push_mouse_cursor(MOUSE_CURSOR_DEFAULT);
 
   if (Vector2Length(GetMouseDelta()) > 0.0f)
   {
@@ -1029,8 +1067,6 @@ code_update(State *state)
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
-
-
 #if !defined(DESKTOP_H)
 #define DESKTOP_H
 
@@ -1111,10 +1147,7 @@ typedef enum
 typedef enum
 {
   Z_LAYER_NIL = 0,
-  Z_LAYER_FFT_BG,
-  Z_LAYER_FFT_FG,
-  Z_LAYER_TOOLTIP_BG,
-  Z_LAYER_TOOLTIP_FG,
+  Z_LAYER_TOOLTIP,
 } Z_LAYER;
 
 typedef struct RenderElement RenderElement;
@@ -1159,6 +1192,13 @@ struct AlphaNode
   f32 value;
 };
 
+typedef struct MouseCursorNode MouseCursorNode; 
+struct MouseCursorNode
+{
+  MouseCursorNode *next;
+  MouseCursor value;
+};
+
 typedef struct State State;
 INTROSPECT() struct State
 {
@@ -1175,10 +1215,12 @@ INTROSPECT() struct State
   b32 hover_consumed;
   b32 left_click_consumed;
 
+  MouseCursorNode *mouse_cursor_stack;
   AlphaNode *alpha_stack;
   ZLayerNode *z_layer_stack;
   RenderElement *render_element_first, *render_element_last;
   u32 render_element_queue_count;
+  u64 active_button_id;
 
   MusicFile music_files[MAX_MUSIC_FILES];
   Handle active_music_handle;
