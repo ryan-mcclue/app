@@ -191,7 +191,7 @@ pop_mouse_cursor(void)
 
 
 INTERNAL void
-push_rect(Rectangle r, Color c)
+push_rect(Rectangle r, Color c, f32 roundness = 0.f, int segments = 0)
 {
   RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
   re->type = RE_RECT;
@@ -199,6 +199,8 @@ push_rect(Rectangle r, Color c)
   re->colour = {c.r, c.g, c.b, c.a * g_state->alpha_stack->value};
 
   re->rec = r;
+  re->roundness = roundness;
+  re->segments = segments;
   SLL_QUEUE_PUSH(g_state->render_element_first, g_state->render_element_last, re);
   g_state->render_element_queue_count += 1;
 }
@@ -221,18 +223,40 @@ push_text(const char *s, Font f, f32 font_size, Vector2 p, Color c)
 }
 
 INTERNAL void
+push_circle(Vector2 p, f32 radius, Color c)
+{
+  RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
+  re->type = RE_CIRCLE;
+  re->z = g_state->z_layer_stack->value;
+  re->colour = {c.r, c.g, c.b, c.a * g_state->alpha_stack->value};
+
+  re->rec = {p.x, p.y, 0.f, 0.f};
+  re->radius = radius;
+  SLL_QUEUE_PUSH(g_state->render_element_first, g_state->render_element_last, re);
+  g_state->render_element_queue_count += 1;
+}
+
+INTERNAL void
+push_line(Vector2 start, Vector2 end, f32 thickness, Color c)
+{
+  RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
+  re->type = RE_LINE;
+  re->z = g_state->z_layer_stack->value;
+  re->colour = {c.r, c.g, c.b, c.a * g_state->alpha_stack->value};
+
+  re->rec = {start.x, start.y, end.x, end.y};
+  re->thickness = thickness;
+  SLL_QUEUE_PUSH(g_state->render_element_first, g_state->render_element_last, re);
+  g_state->render_element_queue_count += 1;
+}
+
+
+INTERNAL void
 push_texture(Texture t, Vector2 p, f32 scale, Color c)
 {
 
 }
 
-INTERNAL void
-push_circle(void)
-{
-  // specify segments to get a 'cleaner' circle than default
-  //DrawCircleSector(cc, cc.x*.2f, 0, 360, 69, RED);
-  //DrawCircleSector(cc, cc.x*.18f, 0, 360, 30, WHITE);
-}
 
 INTERNAL void
 merge_sort_render_elements(RenderSortElement *entries, u32 count, RenderSortElement *merge_temp) 
@@ -312,12 +336,21 @@ render_elements(void)
       default: { ASSERT("Drawing nil type" && 0); } break;
       case RE_RECT:
       {
-        DrawRectangleRec(re->rec, re->colour);
+        DrawRectangleRounded(re->rec, re->roundness, re->segments, re->colour);
       } break;
       case RE_TEXT:
       {
         DrawTextEx(re->font, re->text, {re->rec.x, re->rec.y}, re->font_size, 0.f, re->colour);
       } break;
+      case RE_CIRCLE:
+      {
+        DrawCircleV({re->rec.x, re->rec.y}, re->radius, re->colour);
+      } break;
+      case RE_LINE:
+      {
+        DrawLineEx({re->rec.x, re->rec.y}, {re->rec.width, re->rec.height}, re->thickness, re->colour);
+      } break;
+
 /*       case RE_TEXTURE:
       {
         DrawTextureEx();
@@ -448,42 +481,6 @@ f32 max_scroll = (mf_width * g_state->num_mf) - r.width;
   f32 max_scroll = (mf_width * 10) - r.width;
   if (max_scroll < 0) max_scroll = (mf_width * 10);
   g_state->mf_scroll = CLAMP(0.0f, g_state->mf_scroll, max_scroll);
-
-  MusicFile *active_mf = mf_from_handle(g_state->active_mf_handle);
-  for (MusicFile *mf = g_state->first_mf;
-       mf != NULL; mf = mf->next)
-  {
-    Rectangle mf_rec = {g_state->mf_scroll + r.x + mf_margin + i * (mf_margin + mf_width), 
-                        r.y + mf_margin, 
-                        mf_width, 
-                        mf_height};
-    Color mf_color = YELLOW;
-    
-    if (mf == active_mf)
-    {
-      mf_color = PURPLE;
-    }
-    if (CheckCollisionPointRec(GetMousePosition(), mf_rec))
-    {
-      // TODO: add filename tooltip
-      mf_color = GREEN;
-      if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
-      {
-        if (!mf_is_zero(active_mf))
-        {
-          StopMusicStream(active_mf->music);
-          DetachAudioStreamProcessor(active_mf->music.stream, music_callback);
-        }
-        AttachAudioStreamProcessor(mf->music.stream, music_callback);
-        SetMusicVolume(mf->music, 0.5f);
-        PlayMusicStream(mf->music);
-        g_state->active_mf_handle = handle_from_mf(mf);
-      }
-    }
-    DrawRectangleRec(mf_rec, mf_color);
-
-    i += 1;
-  }
 } */
 
 typedef enum 
@@ -574,8 +571,6 @@ draw_button_with_location(u32 line, Rectangle region, const char *label, Color c
 }
 
 
-// state->red_slider = draw_slider(r, "Red: ", state->red_slider);
-// state->red = draw_slider(r, "Red: ", state->red, &state->red_dragging)
 
 /* 
 begin()
@@ -708,8 +703,54 @@ draw_slider(Rectangle region, COLOR_MODE mode, f32 value, b32 *dragging, Colour 
   return value;
 } */
 
+// other state would be: b32 *expanded
 INTERNAL void
-draw_volume_slider(Rectangle region)
+draw_slider(Rectangle region, f32 *value, b32 *dragging)
+{
+  Vector2 mouse_pos = GetMousePosition();
+
+  Vector2 padding = {region.width * 0.05f, region.height * 0.4f};
+  f32 w = region.width - 2.f*padding.x;
+  f32 h = region.height - 2.f*padding.y;
+  Rectangle bar_r = {region.x + padding.x, region.y + padding.y, w, h};
+  push_rect(bar_r, COLOR_ORANGE_ACCENT, 0.5, 20);
+  //push_rect(bar_r, COLOR_ORANGE_ACCENT);
+
+  f32 radius = region.height*0.25f;
+  f32 offset = bar_r.width*(*value) + radius;
+  f32 circle_x = bar_r.x + offset;
+  Vector2 circle = {bar_r.x + offset, bar_r.y + bar_r.height*.5f};
+  push_circle(circle, radius, COLOR_ORANGE_ACCENT);
+
+  b32 hovering = CheckCollisionPointCircle(mouse_pos, circle, radius);
+  if (hovering || *dragging)
+  {
+    push_mouse_cursor(MOUSE_CURSOR_RESIZE_EW);
+  }
+
+  if (!*dragging )
+  {
+    if (hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+      *dragging = true;
+    }
+  }
+  else
+  {
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) *dragging = false;
+
+    f32 x = CLAMP(bar_r.x, mouse_pos.x, bar_r.x + bar_r.width - radius);
+    x -= bar_r.x;
+    x /= bar_r.width;
+    *value = x;
+/*     f32 wheel = GetMouseWheelMove();
+    value += (4.f * wheel / region.width);
+    value = CLAMP01(value); */
+  }
+}
+
+/* INTERNAL SliderState
+draw_slider(Rectangle region, const char *label, SliderState ss)
 {
   Vector2 mouse_pos = GetMousePosition();
   // TODO: draw a single button; the slider is next to it on hover
@@ -773,7 +814,7 @@ draw_volume_slider(Rectangle region)
       // SetMasterVolume()
     }
   }
-}
+} */
 
 INTERNAL MusicFile *
 alloc_music_file(void)
@@ -810,6 +851,36 @@ draw_scroll_region(Rectangle r)
   f32 btn_w = r.width - btn_padding*2.f;
   f32 btn_h = r.height * 0.1f;
 
+  f32 scroll_w = r.width * 0.1f;
+  f32 scrollable_area = (btn_h + 2.f*btn_padding) * g_state->num_loaded_music_files;
+
+  if (scrollable_area > r.height)
+  {
+    Vector2 mouse = GetMousePosition();
+    if (CheckCollisionPointRec(mouse, r))
+    {
+      g_state->scroll_velocity -= GetMouseWheelMove() * btn_h * 8.f;
+    }
+    g_state->scroll_velocity *= 0.9f;
+    g_state->scroll += g_state->scroll_velocity * GetFrameTime();
+
+    if (g_state->scroll < 0) g_state->scroll = 0;
+    f32 max_scroll = scrollable_area - r.height;
+    if (g_state->scroll > max_scroll) g_state->scroll = max_scroll;
+
+    Rectangle scroll_bg = {r.x + r.width - scroll_w, r.y, scroll_w, r.height};
+    push_rect(scroll_bg, COLOR_RED_ACCENT);
+
+    f32 scroll_off_t = g_state->scroll / scrollable_area;
+    f32 scroll_h_t = r.height / scrollable_area;
+    Rectangle scroll_fg = {scroll_bg.x, r.y + r.height * scroll_off_t,
+                           scroll_w - 5.f, r.height * scroll_h_t};
+    push_rect(scroll_fg, COLOR_GREEN_ACCENT);
+  }
+  
+  // push_start_scissor(r); BeginScissorMode(r.x, r.y, r.width, r.height);
+  // push_end_scissor(); EndScissorMode();
+
   MusicFile *active = DEREF_MUSIC_FILE_HANDLE(g_state->active_music_handle);
   for (u32 i = 0; i < ARRAY_COUNT(g_state->music_files); i += 1)
   {
@@ -823,13 +894,20 @@ draw_scroll_region(Rectangle r)
     }
 
     Rectangle btn_r = {r.x + btn_padding, 
-                       r.y + btn_padding + i*(btn_h + btn_padding),
+                       r.y + btn_padding + i*(btn_h + btn_padding) - g_state->scroll,
                        btn_w, btn_h};
     
     BUTTON_STATE bs = draw_button(btn_r, m->file_name, c);
     if (bs & BS_CLICKED)
     {
+      StopMusicStream(active->music);
+      DetachAudioStreamProcessor(active->music.stream, music_callback);
+
       g_state->active_music_handle = TO_HANDLE(m);
+
+      AttachAudioStreamProcessor(m->music.stream, music_callback);
+      SetMusicVolume(m->music, 0.5f);
+      PlayMusicStream(m->music);
     } else if (bs & BS_HOVERING)
     {
       String8 s = str8_fmt(g_state->frame_arena, "%f", GetMusicTimeLength(m->music));
@@ -837,18 +915,6 @@ draw_scroll_region(Rectangle r)
     }
 
   }
-
-  //f32 font_size = g_state->font.baseSize * (r.width / r.height);
-
-/*   Rectangle label_r = {r.x, r.y, r.width, 50};
-  Color bg_color = ColorBrightness(COLOR_YELLOW_ACCENT, 0.5);
-  if (consume_hover(label_r))
-  {
-    bg_color = ColorBrightness(COLOR_YELLOW_ACCENT, 0.7);
-  }
-  push_rect(label_r, bg_color);
-  push_rect({r.x, r.y+20, 20, 20}, COLOR_BLUE_ACCENT);
-  push_text("hi there", g_state->font, 40.f, {r.x + 30.f, r.y+20}, COLOR_FONT); */
 }
 // IMPORTANT: GetCollisionRec(panel, item)
 // this computes the intersection of two rectangles
@@ -863,11 +929,23 @@ draw_color_picker(Rectangle r)
 INTERNAL void
 draw_fft(Rectangle r, f32 *samples, u32 num_samples)
 {
-  DrawRectangleRec(r, COLOR_BG0);
+  push_rect(r, COLOR_BG0);
+
+  Rectangle play_slider = cut_rect_bottom(r, 0.9f);
+  r = cut_rect_top(r, 0.9f);
 
   MusicFile *active = DEREF_MUSIC_FILE_HANDLE(g_state->active_music_handle);
   if (!ZERO_MUSIC_FILE(active))
   {
+    f32 music_length = GetMusicTimeLength(active->music);
+    f32 prev_slider = GetMusicTimePlayed(active->music) / music_length;
+    g_state->active_music_slider_value = prev_slider;
+    draw_slider(play_slider, &g_state->active_music_slider_value, &g_state->active_music_slider_dragging);
+    if (!f32_eq(g_state->active_music_slider_value, prev_slider))
+    {
+      SeekMusicStream(active->music, music_length * g_state->active_music_slider_value);
+    }
+
     if (g_state->is_music_paused)
     {
       char *text = "PAUSED";
@@ -886,19 +964,21 @@ draw_fft(Rectangle r, f32 *samples, u32 num_samples)
   for (u32 i = 0; i < num_samples; i += 1)
   {
     f32 bin_h = samples[i] * r.height;
-    Rectangle bin_rect = {
+    f32 thickness = bin_w / (3.f * F32_SQRT(samples[i]));
+
+/*     Rectangle bin_rect = {
       r.x + (i * bin_w), 
       r.y + (r.height - bin_h), 
       bin_w, 
       bin_h
-    }; 
+    };  */
 
     f32 hue = (f32)i / num_samples;
     Color c = ColorFromHSV(360 * hue, 1.0f, 1.0f);
-    DrawRectangleRec(bin_rect, c);
 
-    // float thick = cell_width/3*sqrtf(t);
-    // DrawLineEx(startPos, endPos, thick, color);
+    Vector2 start = {r.x + (i * bin_w), r.y + r.height};
+    Vector2 end = {start.x, start.y - bin_h};
+    push_line(start, end, thickness, c);
   }
 }
 
@@ -967,6 +1047,7 @@ code_update(State *state)
           SetMusicVolume(m->music, 0.5f);
           PlayMusicStream(m->music);
         }
+        g_state->num_loaded_music_files += 1;
       }
     }
     UnloadDroppedFiles(dropped_files);
@@ -1067,6 +1148,8 @@ code_update(State *state)
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
+
+
 #if !defined(DESKTOP_H)
 #define DESKTOP_H
 
@@ -1140,8 +1223,9 @@ typedef enum
   RE_NIL = 0,
   RE_RECT,
   RE_TEXT,
+  RE_CIRCLE,
+  RE_LINE,
   RE_TEXTURE,
-  RE_CIRCLE
 } RENDER_ELEMENT_TYPE;
 
 typedef enum
@@ -1161,6 +1245,12 @@ struct RenderElement
   Color colour;
 
   Rectangle rec;
+  f32 roundness;
+  u32 segments;
+
+  f32 radius;
+
+  f32 thickness;
 
   Font font;
   f32 font_size;
@@ -1224,7 +1314,13 @@ INTROSPECT() struct State
 
   MusicFile music_files[MAX_MUSIC_FILES];
   Handle active_music_handle;
+  u32 num_loaded_music_files;
+  f32 active_music_slider_value;
+  b32 active_music_slider_dragging;
   b32 is_music_paused;
+
+  f32 scroll;
+  f32 scroll_velocity;
 
   SampleRing samples_ring;
   f32 hann_samples[NUM_SAMPLES];
@@ -1232,8 +1328,6 @@ INTROSPECT() struct State
   f32 draw_samples[HALF_SAMPLES];
 
   f32 mouse_last_moved_time;
-  f32 mf_scroll_velocity;
-  f32 mf_scroll;
 };
 
 typedef void (*code_preload_t)(State *s);
