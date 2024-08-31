@@ -206,6 +206,22 @@ push_rect(Rectangle r, Color c, f32 roundness = 0.f, int segments = 0)
 }
 
 INTERNAL void
+push_rect_outline(Rectangle r, Color c, f32 thickness, f32 roundness = 0.f, int segments = 0)
+{
+  RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
+  re->type = RE_RECT_OUTLINE;
+  re->z = g_state->z_layer_stack->value;
+  re->colour = {c.r, c.g, c.b, c.a * g_state->alpha_stack->value};
+
+  re->rec = r;
+  re->thickness = thickness;
+  re->roundness = roundness;
+  re->segments = segments;
+  SLL_QUEUE_PUSH(g_state->render_element_first, g_state->render_element_last, re);
+  g_state->render_element_queue_count += 1;
+}
+
+INTERNAL void
 push_text(const char *s, Font f, f32 font_size, Vector2 p, Color c)
 {
   RenderElement *re = MEM_ARENA_PUSH_STRUCT_ZERO(g_state->frame_arena, RenderElement);
@@ -338,6 +354,10 @@ render_elements(void)
       {
         DrawRectangleRounded(re->rec, re->roundness, re->segments, re->colour);
       } break;
+      case RE_RECT_OUTLINE:
+      {
+        DrawRectangleRoundedLines(re->rec, re->roundness, re->segments, re->thickness, re->colour);
+      } break;
       case RE_TEXT:
       {
         DrawTextEx(re->font, re->text, {re->rec.x, re->rec.y}, re->font_size, 0.f, re->colour);
@@ -350,11 +370,6 @@ render_elements(void)
       {
         DrawLineEx({re->rec.x, re->rec.y}, {re->rec.width, re->rec.height}, re->thickness, re->colour);
       } break;
-
-/*       case RE_TEXTURE:
-      {
-        DrawTextureEx();
-      } break; */
     }
   }
 
@@ -552,7 +567,13 @@ draw_button_with_id(u64 id, Rectangle region, const char *label, Color c)
   Vector2 label_size = {label_dim.x + label_margin.x*2.f, label_dim.y + label_margin.y*2.f};
   Rectangle label_rect = align_rect(region, label_size, RA_CENTRE);
   push_rect(region, c);
-  push_text(label, g_state->font, font_size, {label_rect.x, label_rect.y}, WHITE);
+  push_rect_outline(region, ColorBrightness(c, -0.1f), 5.0f);
+
+  Vector2 label_pos = {label_rect.x, label_rect.y};
+  f32 offset = (font_size / 40.f);
+  Vector2 label_shadow = {label_pos.x + offset, label_pos.y + offset}; 
+  push_text(label, g_state->font, font_size, label_shadow, BLACK);
+  push_text(label, g_state->font, font_size, label_pos, WHITE);
 
   u32 mask = !!hovering | (!!clicked << 1);
   return (BUTTON_STATE)mask;
@@ -920,10 +941,79 @@ draw_scroll_region(Rectangle r)
 // this computes the intersection of two rectangles
 // useful for BeginScissorMode()
 
+/*   //- rjf: draw cursor information
+  if(cursor_viz_data.is_active && UI_KeyMatch(box->key, cursor_viz_data.key)) {
+   Vec4F32 color = UI_TopCursorColor();
+   F32 cursor_blink_t = UI_CursorBlinkT(); (blink_t += dt every frame)
+   F32 cursor_thickness = UI_TopFontSize()*0.5f;
+   cursor_thickness = ClampBot(cursor_thickness, 3.f);
+   color.alpha = color.alpha * (0.6f + Cos(0.5f * cursor_blink_t / OS_CaretBlinkTime())*0.4f);
+   
+   F32 velocity_factor = cursor_viz_data.velocity * 0.8f;
+   F32 min_velocity_factor = ClampTop(0, velocity_factor);
+   F32 max_velocity_factor = ClampBot(0, velocity_factor);
+   
+   Vec2F32 box_text_pos = UI_TextPosFromBox(box);
+   Rng2F32 rect = {0};
+   {
+    rect.x0 = box_text_pos.x + cursor_viz_data.p.x - cursor_thickness/2 + min_velocity_factor;
+    rect.y0 = box->rect.y0 + box->ext_text->font_size/4.f - AbsoluteValueF32(velocity_factor)*box->ext_text->font_size*0.035f;
+    rect.x1 = box_text_pos.x + cursor_viz_data.p.x + cursor_thickness/2 + max_velocity_factor;
+    rect.y1 = box->rect.y1 - box->ext_text->font_size/4.f + AbsoluteValueF32(velocity_factor)*box->ext_text->font_size*0.035f;
+   };
+   D_Rect2D(rect, .color = color, .corner = 1.f, .softness = 1.f);
+  } */
+
+void f()
+{
+  if (hovering_over_value)
+  {
+    push_mouse_cursor(MOUSE_CURSOR_IBEAM);
+    if (mouse_released && g_state->input_id != RED_COMPONENT)
+    {
+      set_text_input_info(value_rect, RED_COMPONENT)
+      // convert source to text
+      snprintf(g_state->input_buffer, g_state->red_component_value);
+      g_state->input_cursor_p = (mouse.x - g_state->input_loc.x) / g_state->input_loc.width;
+    }
+  }
+}
+
+INTERNAL void
+draw_text_input_overlay()
+{
+  if (g_state->input_id == INPUT_NIL) return;
+
+  if (key_release(enter)) 
+  {
+    g_state->input_id = INPUT_NIL; 
+    // update source value
+  }
+  if (key_release(arrows/delete))
+
+
+  // update buffer
+  char ch = GetKeyPressed();
+
+  // draw rect base
+
+  // draw text
+  // DrawTextEx(g_state->input_buffer, left_align_text_pos)
+
+  // draw cursor
+  Rectangle source_rect = g_state->input_r;
+  Rectangle cursor_r = {source_rect.x + g_state->input_cursor_p * source_rect.width,
+                       source_rect.y + source_rect.height * 0.05f, // something with text height
+                       20.f, source_rect.height*.9f};
+  push_rect(cursor_r, cursor_color);
+}
+
 INTERNAL void
 draw_color_picker(Rectangle r)
 {
   push_rect(r, COLOR_BG1);
+
+  // if (mouse_released_over_field) draw_text_input(r, INPUT_RED_COMPONENT, red_width)
 }
 
 INTERNAL void
@@ -1222,6 +1312,7 @@ typedef enum
 {
   RE_NIL = 0,
   RE_RECT,
+  RE_RECT_OUTLINE,
   RE_TEXT,
   RE_CIRCLE,
   RE_LINE,
@@ -1311,6 +1402,12 @@ INTROSPECT() struct State
   RenderElement *render_element_first, *render_element_last;
   u32 render_element_queue_count;
   u64 active_button_id;
+
+  u32 input_id; // what input item we're on
+  Rectangle input_loc;
+  u32 input_cursor;
+  u32 input_cursor_p;
+  char input_buffer[64];
 
   MusicFile music_files[MAX_MUSIC_FILES];
   Handle active_music_handle;
