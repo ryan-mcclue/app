@@ -139,6 +139,11 @@ align_rect(Rectangle target, Vector2 size, RECT_ALIGN side)
       result.x = x;
       result.y = y;
     } break;
+    case RA_LEFT_INNER:
+    {
+      result.x = target.x + target.width * 0.02f;
+      result.y = target.y + target.height*.5f - size.y*.5f;;
+    } break;
   }
   return result;
 }
@@ -475,29 +480,6 @@ fft(f32 *in, u32 stride, f32z *out, u32 n)
   }
 }
 
-/* INTERNAL void
-mf_render(Rectangle r)
-{
-  Color bg_color = DARKGRAY;
-  DrawRectangleRec(r, bg_color);
-
-  f32 mf_dim = r.height * 0.7f;
-  f32 mf_margin = r.height * 0.1f; 
-  f32 mf_width = mf_dim;
-  f32 mf_height = mf_width;
-  u32 i = 0;
-
-  f32 mf_v = mf_width;
-  g_state->mf_scroll_velocity *= 0.9f;
-  g_state->mf_scroll_velocity += GetMouseWheelMove() * mf_v;
-  g_state->mf_scroll += g_state->mf_scroll_velocity * GetFrameTime(); 
-
-f32 max_scroll = (mf_width * g_state->num_mf) - r.width;
-  f32 max_scroll = (mf_width * 10) - r.width;
-  if (max_scroll < 0) max_scroll = (mf_width * 10);
-  g_state->mf_scroll = CLAMP(0.0f, g_state->mf_scroll, max_scroll);
-} */
-
 typedef enum 
 {
   BS_NIL = 0,
@@ -531,8 +513,26 @@ draw_tooltip(Rectangle region, const char *text, RECT_ALIGN align)
   }
 }
 
+INTERNAL void
+push_rect_with_label(Rectangle r, const char *label, Color c, RECT_ALIGN text_align = RA_CENTRE)
+{
+  f32 font_size = r.height * 0.45f;
+  Vector2 label_dim = MeasureTextEx(g_state->font, label, font_size, 0.f);
+  Vector2 label_margin = {font_size*0.5f, font_size*0.1f};
+  Vector2 label_size = {label_dim.x + label_margin.x*2.f, label_dim.y + label_margin.y*2.f};
+  Rectangle label_rect = align_rect(r, label_size, text_align);
+  push_rect(r, c);
+  push_rect_outline(r, BLACK, 5.0f);
+
+  Vector2 label_pos = {label_rect.x, label_rect.y};
+  f32 offset = (font_size / 40.f);
+  Vector2 label_shadow = {label_pos.x + offset, label_pos.y + offset}; 
+  push_text(label, g_state->font, font_size, label_shadow, BLACK);
+  push_text(label, g_state->font, font_size, label_pos, WHITE);
+}
+
 INTERNAL BUTTON_STATE
-draw_button_with_id(u64 id, Rectangle region, const char *label, Color c)
+draw_button_with_id(u64 id, Rectangle region)
 {
   Vector2 mouse = GetMousePosition();
   b32 hovering = CheckCollisionPointRec(mouse, region);
@@ -554,41 +554,20 @@ draw_button_with_id(u64 id, Rectangle region, const char *label, Color c)
     }
   }
 
-  if (hovering) 
-  {
-    c = ColorBrightness(c, 0.2);
-    push_mouse_cursor(MOUSE_CURSOR_POINTING_HAND);
-
-  }
-
-  f32 font_size = region.height * 0.45f;
-  Vector2 label_dim = MeasureTextEx(g_state->font, label, font_size, 0.f);
-  Vector2 label_margin = {font_size*0.5f, font_size*0.1f};
-  Vector2 label_size = {label_dim.x + label_margin.x*2.f, label_dim.y + label_margin.y*2.f};
-  Rectangle label_rect = align_rect(region, label_size, RA_CENTRE);
-  push_rect(region, c);
-  push_rect_outline(region, ColorBrightness(c, -0.1f), 5.0f);
-
-  Vector2 label_pos = {label_rect.x, label_rect.y};
-  f32 offset = (font_size / 40.f);
-  Vector2 label_shadow = {label_pos.x + offset, label_pos.y + offset}; 
-  push_text(label, g_state->font, font_size, label_shadow, BLACK);
-  push_text(label, g_state->font, font_size, label_pos, WHITE);
-
   u32 mask = !!hovering | (!!clicked << 1);
   return (BUTTON_STATE)mask;
 }
 
-#define draw_button(region, label, color) \
-  draw_button_with_location(__LINE__, region, label, color)
+#define draw_button(region, name) \
+  draw_button_with_location(__LINE__, name, region)
 
 INTERNAL BUTTON_STATE
-draw_button_with_location(u32 line, Rectangle region, const char *label, Color c)
+draw_button_with_location(u32 line, const char *name, Rectangle region)
 {
-  u64 seed = hash_ptr(label);
+  u64 seed = hash_ptr(name);
   u64 id = hash_data(seed, &line, sizeof(line));
 
-  return draw_button_with_id(id, region, label, c);
+  return draw_button_with_id(id, region);
 }
 
 
@@ -770,73 +749,6 @@ draw_slider(Rectangle region, f32 *value, b32 *dragging)
   }
 }
 
-/* INTERNAL SliderState
-draw_slider(Rectangle region, const char *label, SliderState ss)
-{
-  Vector2 mouse_pos = GetMousePosition();
-  // TODO: draw a single button; the slider is next to it on hover
-  f32 base_w = region.width * 0.2f;
-  f32 h = region.height * 0.8f;
-  Rectangle slider_r = {region.x + region.x * BUTTON_MARGIN, 
-                        region.y + region.y * BUTTON_MARGIN, 
-                        base_w, h};
-
-  LOCAL_PERSIST b32 expanded = false;
-  LOCAL_PERSIST f32 value = 0.f;
-  LOCAL_PERSIST b32 dragging = false;
-
-  Color c = BUTTON_COLOR;
-  expanded = dragging || CheckCollisionPointRec(mouse_pos, slider_r);
-  if (expanded)
-  {
-    slider_r.width *= 5.f;
-    c = BUTTON_COLOR_HOVEROVER;
-  }
-  DrawRectangleRounded(slider_r, 0.5, 20, c);
-
-  if (expanded)
-  {
-    // draw horizontal slider
-    Rectangle r = {slider_r.x + slider_r.x*BUTTON_MARGIN,
-                   slider_r.y, 
-                   slider_r.width - slider_r.width * 0.2f,
-                   slider_r.height};
-    Vector2 slider_start = {r.x, r.y + r.height*.5f}; 
-    Vector2 slider_end = {r.x + r.width, r.y + r.height*.5f};
-    DrawLineEx(slider_start, slider_end, r.height*0.15f, GREEN);
-
-    f32 radius = r.height*0.25f;
-    Vector2 slider_circle =  {slider_start.x + (slider_end.x - slider_start.x)*value, slider_start.y};
-    DrawCircleV(slider_circle, radius, GREEN);
-
-    b32 slider_circle_hover = CheckCollisionPointCircle(mouse_pos, slider_circle, radius);
-    if (!dragging)
-    {
-      if (slider_circle_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-      {
-        dragging = true; 
-      }
-    }
-    else
-    {
-      if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) dragging = false;
-
-      //f32 value = GetMasterVolume();
-
-      f32 x = CLAMP(slider_start.x, mouse_pos.x, slider_end.x);
-      x -= slider_start.x;
-      x /= (slider_end.x - slider_start.x);
-      value = x;
-
-      f32 wheel = GetMouseWheelMove();
-      value += (4.f * wheel / region.width);
-      value = CLAMP01(value);
-
-      // SetMasterVolume()
-    }
-  }
-} */
-
 INTERNAL MusicFile *
 alloc_music_file(void)
 {
@@ -918,7 +830,12 @@ draw_scroll_region(Rectangle r)
                        r.y + btn_padding + i*(btn_h + btn_padding) - g_state->scroll,
                        btn_w, btn_h};
     
-    BUTTON_STATE bs = draw_button(btn_r, m->file_name, c);
+    BUTTON_STATE bs = draw_button(btn_r, m->file_name);
+
+    if (bs & (BS_CLICKED | BS_HOVERING))
+    {
+      push_mouse_cursor(MOUSE_CURSOR_POINTING_HAND);
+    }
     if (bs & BS_CLICKED)
     {
       StopMusicStream(active->music);
@@ -929,11 +846,15 @@ draw_scroll_region(Rectangle r)
       AttachAudioStreamProcessor(m->music.stream, music_callback);
       SetMusicVolume(m->music, 0.5f);
       PlayMusicStream(m->music);
-    } else if (bs & BS_HOVERING)
+    } 
+    else if (bs & BS_HOVERING)
     {
       String8 s = str8_fmt(g_state->frame_arena, "%f", GetMusicTimeLength(m->music));
       draw_tooltip(btn_r, (const char *)s.content, RA_RIGHT);
+      c = ColorBrightness(c, 0.1);
     }
+
+    push_rect_with_label(btn_r, m->file_name, c);
 
   }
 }
@@ -964,36 +885,97 @@ draw_scroll_region(Rectangle r)
    D_Rect2D(rect, .color = color, .corner = 1.f, .softness = 1.f);
   } */
 
-void f()
+INTERNAL Color
+lerp_color(Color a, Color b, f32 t)
 {
-  if (hovering_over_value)
+  return {
+    255.0f * f32_lerp(a.r, b.r, t),
+    255.0f * f32_lerp(a.g, b.g, t),
+    255.0f * f32_lerp(a.b, b.b, t),
+    255.0f * f32_lerp(a.a, b.a, t),
+  };
+}
+
+INTERNAL
+void draw_text_input(Rectangle r)
+{
+  // TODO: selection: engine programming 5-6
+  BUTTON_STATE bs = draw_button(r, "text-input");
+  if (bs & (BS_CLICKED | BS_HOVERING))
   {
     push_mouse_cursor(MOUSE_CURSOR_IBEAM);
-    if (mouse_released && g_state->input_id != RED_COMPONENT)
+  }
+  if (bs & BS_CLICKED)
+  {
+    Vector2 mouse = GetMousePosition();
+    g_state->text_input_cursor_t = (mouse.x - r.x) / r.width;
+    if (!g_state->text_input_active)
     {
-      set_text_input_info(value_rect, RED_COMPONENT)
-      // convert source to text
-      snprintf(g_state->input_buffer, g_state->red_component_value);
-      g_state->input_cursor_p = (mouse.x - g_state->input_loc.x) / g_state->input_loc.width;
+      g_state->text_input_buffer_len = snprintf(g_state->text_input_buffer, ARRAY_COUNT(g_state->text_input_buffer), 
+                                                "%u", g_state->text_input_val);
     }
+    g_state->text_input_active = true;
+
+    Vector2 text_dim = MeasureTextEx(g_state->font, g_state->text_input_buffer, size, 0.f);
+    f32 ch_width = text_dim.x / strlen(g_state->text_input_buffer);
+    u32 at_estimate = (g_state->text_input_cursor_t * r.width) / ch_width;
+    g_state->text_input_buffer_at = at_estimate;
+  }
+  if (g_state->text_input_active)
+  {
+    handle_text_input_u32(r, &g_state->text_input_val); 
+  }
+  else
+  {
+    String8 s = str8_fmt(g_state->frame_arena, "%u", g_state->text_input_val);
+    push_rect_with_label(r, (const char *)s.content, COLOR_GREEN_ACCENT, RA_LEFT_INNER);
   }
 }
 
 INTERNAL void
-draw_text_input_overlay()
+handle_text_input_u32(Rectangle r, u32 *value)
 {
-  if (g_state->input_id == INPUT_NIL) return;
-
-  if (key_release(enter)) 
+  if (IsKeyPressed(KEY_ENTER))
   {
-    g_state->input_id = INPUT_NIL; 
-    // update source value
+    g_state->text_input_active = false; 
+    // parse_and_store_input_text();
+    *value = (u32)str8_to_int(g_state->text_input_buffer);
   }
-  if (key_release(arrows/delete))
+  if ((IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT)) && 
+       g_state->text_input_buffer_at > 0)
+  {
+    g_state->text_input_buffer_at -= 1;
+  }
+  if ((IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT)) && 
+       g_state->text_input_buffer_at > 0)
+  {
+    g_state->text_input_buffer_at -= 1;
+  }
+  if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)) && 
+       g_state->text_input_buffer_at > 0)
+  {
+    g_state->text_input_buffer_at -= 1;
+    MEMORY_COPY(g_state->text_input_buffer + g_state->text_input_buffer_at + 1, 
+                g_state->text_input_buffer + g_state->text_input_buffer_at,
+                buf_len - g_state->text_input_buffer_at);
+  }
 
-
-  // update buffer
-  char ch = GetKeyPressed();
+  char ch = GetCharPressed();
+  while (ch > 0)
+  {
+    u32 buf_max = ARRAY_COUNT(g_state->text_input_buffer);
+    if (g_state->text_input_buffer_len == buf_max - 1)
+    {
+      g_state->text_input_buffer[buf_max - 1] = '\0';
+      break;
+    }
+    MEMORY_COPY(input_buf + input_cursor, 
+                input_buf + input_cursor + 1,
+                buf_len - input_cursor + 1);
+    input_buf[input_cursor++] = ch;
+    g_state->text_input_buffer_len++;
+    ch = GetCharPressed();
+  }
 
   // draw rect base
 
@@ -1001,11 +983,19 @@ draw_text_input_overlay()
   // DrawTextEx(g_state->input_buffer, left_align_text_pos)
 
   // draw cursor
+  // TODO: compute accurate cursor position
   Rectangle source_rect = g_state->input_r;
-  Rectangle cursor_r = {source_rect.x + g_state->input_cursor_p * source_rect.width,
-                       source_rect.y + source_rect.height * 0.05f, // something with text height
-                       20.f, source_rect.height*.9f};
+  // ch_width = text_len / input_cur_len;
+  // cursor_x = source_rect.x + (cursor_p * input_cur_len + 0.5f) * ch_width;
+  // cursor_w = (buffer_at == buffer_len ? 20 : 5);
+  f32 cursor_x = source_rect.x + g_state->input_cursor_p * g_state->input_text_len + 0.5f;
+  cursor_x = CLAMP(0, cursor_x, ARRAY_COUNT(input_text_bufffer));
+
+  Rectangle cursor_r = { cursor_x, source_rect.y + source_rect.height * 0.05f, // something with text height
+                       20.f, text_height};
+  // cursor_color = lerp(cursor_c, button_bg, t);
   push_rect(cursor_r, cursor_color);
+
 }
 
 INTERNAL void
@@ -1219,6 +1209,9 @@ code_update(State *state)
   draw_scroll_region(scroll_region);
   draw_fft(fft_region, state->draw_samples, num_bins);
   draw_color_picker(color_region);
+
+  Rectangle text_r = {color_region.x + 50, color_region.y + 50, 600, 100};
+  draw_text_input(text_r);
 /*
   Rectangle slider_region = {rw*.2f, rh*.2f, rw*.5f, rh*.1f};
   DrawRectangleRec(slider_region, {255, 10, 20, 255});
@@ -1305,7 +1298,8 @@ typedef enum
   RA_RIGHT,
   RA_BOTTOM,
   RA_LEFT,
-  RA_CENTRE
+  RA_CENTRE,
+  RA_LEFT_INNER
 } RECT_ALIGN;
 
 typedef enum
@@ -1403,11 +1397,12 @@ INTROSPECT() struct State
   u32 render_element_queue_count;
   u64 active_button_id;
 
-  u32 input_id; // what input item we're on
-  Rectangle input_loc;
-  u32 input_cursor;
-  u32 input_cursor_p;
-  char input_buffer[64];
+  b32 text_input_active;
+  char text_input_buffer[64];
+  u32 text_input_buffer_at;
+  u32 text_input_buffer_len;
+
+  u32 text_input_val;
 
   MusicFile music_files[MAX_MUSIC_FILES];
   Handle active_music_handle;
