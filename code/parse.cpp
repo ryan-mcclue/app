@@ -34,7 +34,6 @@ typedef enum
 {
   JTT_EOS,
   JTT_ERROR,
-  JTT_NULL,
   JTT_OPEN_BRACE,
   JTT_CLOSE_BRACE,
   JTT_OPEN_BRACKET,
@@ -42,10 +41,11 @@ typedef enum
   JTT_COMMA,
   JTT_COLON,
   JTT_SEMICOLON,
-  JTT_STRING_LITERAL,
+  JTT_STRING,
   JTT_NUMBER,
   JTT_TRUE,
   JTT_FALSE,
+  JTT_NULL,
 
   JTT_COUNT
 } JSON_TOKEN_TYPE;
@@ -54,246 +54,183 @@ typedef struct JsonToken JsonToken;
 struct JsonToken
 {
   JSON_TOKEN_TYPE type;
-  RangeU32 range;
-};
-
-typedef struct JsonNode JsonNode;
-struct JsonNode
-{
-  String8 label;
   String8 value;
-  JsonNode *FirstSubElement;
-  JsonNode *NextSibling;
 };
 
-struct MemberDefinition
+typedef struct JsonTokenNode JsonTokenNode;
+struct JsonTokenNode
 {
-  META_TYPE type;
-  String8 name;
-  u32 offset;
+  JsonTokenNode *next;
+  JsonToken token;
 };
 
-INTROSPECT(category: "hi") struct Name
+typedef struct JsonTokenArray JsonTokenArray;
+struct JsonTokenArray
 {
-  int x;
-  char *y;
-};
-
-
-
-typedef struct TokenNode TokenNode;
-struct TokenNode {
-  TokenNode *next;
-  Token token;
-};
-
-typedef struct TokenArray TokenArray;
-struct TokenArray {
-  Token *tokens;
+  JsonToken *tokens;
   u32 count;
 };
 
-typedef struct Tokeniser Tokeniser;
-struct Tokeniser {
-  MemArena *arena;
-  String8 f;
-  TokenArray array;
-  u32 at;
-};
-
-typedef struct MetaStruct MetaStruct;
-struct MetaStruct 
+INTERNAL u32
+parse_json_keyword(u8 *at, JsonToken *t, String8 keyword, JSON_TOKEN_TYPE type)
 {
-  String8 name; 
-  MetaStruct *next;
-};
-GLOBAL MetaStruct *first_meta_struct;
-
-#define TOKEN_VARG(f, t) \
-  range_u32_dim(t.range), (f.content + t.range.min)
-
-INTERNAL void
-dump_struct(void *struct_ptr, MemberDefinition *defs, Token name_token, u32 count, u32 indent_level)
-{
-  // for (u32 i = 0; i < indent_level; i += 1) output_str[i] = ' ';
-  //printf("%.*s\n", name_token);
-  for (u32 i = 0; i < count; i += 1)
+  u32 count = 0;
+  u8 *keyword_start = at;
+  while (count < keyword.size)
   {
-    MemberDefinition mb = defs[i]; 
-    void *member_ptr = (u8 *)struct_ptr + mb.offset;
-
-    if (mb.is_pointer)
+    if (at[0] == keyword.content[count]) 
     {
-      member_ptr = *(void **)member_ptr;
+      at += 1;
+      count += 1;
     }
-
-    switch (mb.type)
-    {
-      case meta_type_u32:
-      {
-        printf("%s - %u", mb.name, *(* u32)member_ptr);
-      } break;
-      case meta_type_v32:
-      {
-        
-      } break;
-      META_STRUCT_DUMP(member_ptr)
-    }
+    else break;
+  } 
+  if (count == keyword.size)
+  {
+    t->type = type;
+    t->value.content = keyword_start;
+    t->value.size = keyword.size;
   }
 
+  return count;
 }
 
-INTERNAL Tokeniser
-lex(MemArena *arena, String8 str)
+INTERNAL JsonTokenArray
+lex_json(MemArena *arena, String8 str)
 {
-  TokenNode *first = NULL, *last = NULL;
+  JsonTokenNode *first = NULL, *last = NULL;
 
   MemArenaTemp temp_arena = mem_arena_temp_begin(NULL, 0);
-  u32 token_count;
-
-  TOKEN_TYPE token_type = TOKEN_TYPE_NULL;
-  u32 token_start = 0;
-  u32 token_end = 0;
+  u32 token_count = 0;
 
   u8 *at = str.content;
   while (at && at[0]) 
   {
-    while (is_whitespace(at[0]))
-    {
-      at += 1;
-    }
-    if (at[0] == '/' && at[1] == '/')
-    {
-      at += 2;
-      while (at[0] && at[0] != '\n' && at[0] != '\r')
-      {
-        at += 1;
-      }
-      if (at[0] && (at[0] == '\n' || at[0] == '\r')) at += 1;
-      continue;
-    } 
-    else if (at[0] == '/' && at[1] == '*')
-    {
-      at += 2;
-      while (at[0] && at[0] != '*' && at[1] && at[1] != '/')
-      {
-        at += 1;
-      }
-      continue;
-    }
+    while (is_whitespace(at[0])) at += 1;
 
-    token_start = at - str.content;
-    token_end = token_start + 1;
-    char ch = at[0];
-    at += 1;
-    switch (ch)
+    JsonToken t = ZERO_STRUCT;
+    t.type = JTT_ERROR;
+    t.value.content = at;
+    t.value.size = 1;
+
+    switch (at[0])
     {
-      case '\0': { token_type = TOKEN_TYPE_EOS; } break;
-      case '(': { token_type = TOKEN_TYPE_OPEN_PAREN; } break;
-      case ')': { token_type = TOKEN_TYPE_CLOSE_PAREN; } break;
-      case '{': { token_type = TOKEN_TYPE_OPEN_BRACE; } break;
-      case '}': { token_type = TOKEN_TYPE_CLOSE_BRACE; } break;
-      case '[': { token_type = TOKEN_TYPE_OPEN_BRACKET; } break;
-      case ']': { token_type = TOKEN_TYPE_CLOSE_BRACKET; } break;
-      case ';': { token_type = TOKEN_TYPE_SEMICOLON; } break;
-      case ':': { token_type = TOKEN_TYPE_COLON; } break;
-      case '*': { token_type = TOKEN_TYPE_ASTERISK; } break;
+      case '\0': { t.type = JTT_EOS; } break;
+      case '{': { t.type = JTT_OPEN_BRACE; } break;
+      case '}': { t.type = JTT_CLOSE_BRACE; } break;
+      case '[': { t.type = JTT_OPEN_BRACKET; } break;
+      case ']': { t.type = JTT_CLOSE_BRACKET; } break;
+      case ',': { t.type = JTT_COMMA; } break;
+      case ':': { t.type = JTT_COLON; } break;
+      case ';': { t.type = JTT_SEMICOLON; } break;
       case '"': 
       { 
-        token_type = TOKEN_TYPE_STRING; 
-        token_start = at - str.content;
-        while (at[0] && at[0] != '"')
-        {
-          if (at[0] == '\\' && at[1]) at += 1;
-          at += 1;
-        }
-        token_end = at - str.content;
+        at += 1;
+        u8 *string_start = at;
+        while (at[0] && at[0] != '"') at += 1;
+        t.value.content = string_start;
+        t.value.size = at - string_start;
         if (at[0] == '"') at += 1;
+        t.type = JTT_STRING; 
       } break;
-      default:
+      case 'f':
       {
-        if (is_alpha(ch))
-        {
-          token_type = TOKEN_TYPE_IDENTIFIER; 
-          while (is_alpha(at[0]) || is_numeric(at[0]) || at[0] == '_')
-          {
-            at += 1;
-          }
-          token_end = at - str.content;
-        }
-#if 0
-        else if (is_numeric(ch))
-        {
-          lex_number();
-        }
-#endif
-        else
-        {
-          token_type = TOKEN_TYPE_NULL;
-        }
+        at += parse_json_keyword(at, &t, str8_lit("false"), JTT_FALSE);
+      } break;
+      case 't':
+      {
+        at += parse_json_keyword(at, &t, str8_lit("true"), JTT_TRUE);
+      } break;
+      case 'n':
+      {
+        at += parse_json_keyword(at, &t, str8_lit("null"), JTT_NULL);
+      } break;
+      case '-':
+      case '0':
+      case '1':
+      case '2':
+      case '3':
+      case '4':
+      case '5':
+      case '6':
+      case '7':
+      case '8':
+      case '9':
+      {
+        u8 *number_start = at;
+        if (at[0] == '-') at += 1;
+        while (is_numeric(at[0])) at += 1;
+        if (at[0] == '.') at += 1;
+        while (is_numeric(at[0])) at += 1;
+        t.value.content = number_start;
+        t.value.size = at - number_start;
+        t.type = JTT_NUMBER; 
       } break;
     }
 
-    TokenNode *token_node = MEM_ARENA_PUSH_STRUCT(temp_arena.arena, TokenNode);
-    token_node->token.type = token_type;
-    token_node->token.range = range_u32(token_start, token_end);
-    SLL_QUEUE_PUSH(first, last, token_node);
+    JsonTokenNode *n = MEM_ARENA_PUSH_STRUCT(temp_arena.arena, JsonTokenNode);
+    n->token= t;
+    SLL_QUEUE_PUSH(first, last, n);
     token_count += 1;
-
-    token_type = TOKEN_TYPE_NULL;
+    at += (t.value.size == 1 ? 1 : 0);
   }
 
-  TokenArray ta = ZERO_STRUCT;
-  ta.tokens = MEM_ARENA_PUSH_ARRAY(arena, Token, token_count);
-  ta.count = token_count;
+  JsonTokenArray a = ZERO_STRUCT;
+  a.tokens = MEM_ARENA_PUSH_ARRAY(arena, JsonToken, token_count);
+  a.count = token_count;
 
   u32 i = 0;
-  for (TokenNode *n = first; n != NULL; n = n->next)
+  for (JsonTokenNode *n = first; n != NULL; n = n->next)
   {
-    ta.tokens[i++] = n->token;
+    a.tokens[i++] = n->token;
   }
 
   mem_arena_temp_end(temp_arena);
 
-
-  Tokeniser t = {NULL, str, ta, 0};
-  return t;
+  return a;
 }
 
 INTERNAL void
-print_token(String8 f, Token t)
+print_json_token(JsonToken t)
 {
   switch (t.type)
   {
-#define CASE(t) case TOKEN_TYPE_##t: printf("TOKEN_TYPE_"#t); break;
-  CASE(NULL)
-  CASE(IDENTIFIER)
-  CASE(OPEN_PAREN)
-  CASE(CLOSE_PAREN)
+#define CASE(t) case JTT_##t: printf("JTT_"#t); break;
+  CASE(ERROR)
+  CASE(EOS)
   CASE(OPEN_BRACE)
   CASE(CLOSE_BRACE)
   CASE(OPEN_BRACKET)
   CASE(CLOSE_BRACKET)
+  CASE(COMMA)
   CASE(COLON)
-  CASE(STRING)
-  CASE(ASTERISK)
   CASE(SEMICOLON)
-  CASE(EOS)
+  CASE(STRING)
+  CASE(NUMBER)
+  CASE(TRUE)
+  CASE(FALSE)
+  CASE(NULL)
 #undef CASE
   }
 
-  printf(": %.*s\n", t.range.max - t.range.min, f.content + t.range.min);
+  printf(": %.*s\n", str8_varg(t.value));
 }
 
-INTERNAL bool
-token_equals(String8 f, Token t, String8 m)
+INTERNAL JsonElementNode
+parse_json(JsonToken)
+{
+
+}
+
+/* INTERNAL bool
+token_equals(String8 f, JsonToken t, String8 m)
 {
   String8 src = str8(f.content + t.range.min, range_u32_dim(t.range));
   return str8_match(src, m, 0);
 }
 
-INTERNAL Token
-consume_token(Tokeniser *t)
+INTERNAL JsonToken
+consume_token(JsonTokeniser *t)
 {
   if (t->at + 1 < t->array.count)
   {
@@ -307,30 +244,30 @@ consume_token(Tokeniser *t)
 }
 
 INTERNAL bool
-require_token(Tokeniser *t, TOKEN_TYPE type)
+require_token(JsonTokeniser *t, TOKEN_TYPE type)
 {
-  Token token = consume_token(t);
+  JsonToken token = consume_token(t);
   return (token.type == type);
 }
 
 INTERNAL void
-parse_introspectable_params(Tokeniser *t)
+parse_introspectable_params(JsonTokeniser *t)
 {
   while (true)
   {
-    Token token = consume_token(t);
+    JsonToken token = consume_token(t);
     if (token.type == TOKEN_TYPE_CLOSE_PAREN ||
         token.type == TOKEN_TYPE_EOS) break;
   }
 }
 
 INTERNAL void
-parse_struct_member(Tokeniser *t, Token struct_type, Token member_type)
+parse_struct_member(JsonTokeniser *t, JsonToken struct_type, JsonToken member_type)
 {
   bool is_pointer = false;
   while (true)
   {
-    Token token = consume_token(t);
+    JsonToken token = consume_token(t);
     if (token.type == TOKEN_TYPE_ASTERISK)
     {
       is_pointer = true;
@@ -351,16 +288,16 @@ parse_struct_member(Tokeniser *t, Token struct_type, Token member_type)
 
 
 INTERNAL void
-parse_struct(Tokeniser *t)
+parse_struct(JsonTokeniser *t)
 {
-  Token name = consume_token(t);
+  JsonToken name = consume_token(t);
   if (require_token(t, TOKEN_TYPE_OPEN_BRACE))
   {
     printf("GLOBAL MemberDefinition g_members_of_%.*s[] = \n", TOKEN_VARG(t->f, name));
     printf("{\n");
     while (true)
     {
-      Token member_token = consume_token(t);
+      JsonToken member_token = consume_token(t);
       if (member_token.type == TOKEN_TYPE_CLOSE_BRACE ||
           member_token.type == TOKEN_TYPE_EOS)
       {
@@ -384,12 +321,12 @@ parse_struct(Tokeniser *t)
 }
 
 INTERNAL void
-parse_introspectable(Tokeniser *t)
+parse_introspectable(JsonTokeniser *t)
 {
   if (require_token(t, TOKEN_TYPE_OPEN_PAREN))
   {
     parse_introspectable_params(t);
-    Token token = consume_token(t);
+    JsonToken token = consume_token(t);
     if (token_equals(t->f, token, str8_lit("struct")))
     {
       parse_struct(t);
@@ -417,12 +354,12 @@ main(int argc, char *argv[])
   thread_context_set_name("Main Thread");
 
   String8 f = str8_read_entire_file(arena, str8_lit("code/meta-test.h"));
-  Tokeniser tokeniser = lex(arena, f);
+  JsonTokeniser tokeniser = lex(arena, f);
   tokeniser.arena = arena;
 
   while (true)
   {
-    Token t = consume_token(&tokeniser); 
+    JsonToken t = consume_token(&tokeniser); 
 
     //print_token(f, t);
 
@@ -442,4 +379,4 @@ main(int argc, char *argv[])
   }
 
   return 0;
-}
+} */
