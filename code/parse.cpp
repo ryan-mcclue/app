@@ -216,11 +216,126 @@ print_json_token(JsonToken t)
   printf(": %.*s\n", str8_varg(t.value));
 }
 
-INTERNAL JsonElementNode
-parse_json(JsonToken)
+typedef struct JsonParserState JsonParserState;
+struct JsonParserState
+{
+  MemArena *arena;
+  JsonTokenArray array;
+  u32 at;
+  b32 have_error;
+};
+
+typedef struct JsonElementNode JsonElementNode;
+struct JsonElementNode
+{
+  JsonElementNode *next;
+  String8 label;
+  String8 value;
+  JsonElementNode *children;
+};
+
+INTERNAL JsonToken
+consume_token(JsonParserState *s)
+{
+  if (s->at + 1 < s->array.count) return s->array.tokens[s->at++];
+  else return ZERO_STRUCT;
+}
+
+INTERNAL b32
+json_parsing_valid(JsonParserState *s)
+{
+  return (!s->have_error && s->at < s->array.count);
+}
+
+INTERNAL void
+set_json_parsing_error(JsonParserState *s, const char *error)
+{
+  s->have_error = true;
+  WARN(error);
+}
+
+INTERNAL JsonElementNode *
+parse_json_token(JsonParserState *s, String8 label, JsonToken t);
+INTERNAL JsonElementNode *
+parse_json_nested(JsonParserState *s, JSON_TOKEN_TYPE ending_token_type)
+{
+  JsonElementNode *children = NULL;
+
+  while (json_parsing_valid(s))
+  {
+    String8 label = ZERO_STRUCT;
+    JsonToken value = consume_token(s);
+    if (ending_token_type == JTT_CLOSE_BRACE)
+    {
+      if (value.type != JTT_STRING) { set_json_parsing_error(s, "Expected string"); break; }
+      label = value.value;
+      JsonToken colon = consume_token(s);
+      if (colon.type != JTT_COLON) { set_json_parsing_error(s, "Expected colon"); break; }
+      value = consume_token(s);
+    }
+
+    if (value.type == ending_token_type) break;
+    JsonElementNode *e = parse_json_token(s, label, value);
+    if (e != NULL) SLL_STACK_PUSH(children, e);
+    else set_json_parsing_error(s, "Invalid token in JSON");
+
+    JsonToken comma = consume_token(s);
+    if (comma.type == ending_token_type) break;
+    else if (comma.type != JTT_COMMA) set_json_parsing_error(s, "Invalid token in JSON");
+  }
+
+  return children;
+}
+
+INTERNAL JsonElementNode *
+parse_json_token(JsonParserState *s, String8 label, JsonToken t)
+{
+  JsonElementNode *children = NULL;
+
+  b32 valid = true;
+  switch (t.type)
+  {
+    default: { valid = false; } break;
+    case JTT_OPEN_BRACE: { children = parse_json_nested(s, JTT_CLOSE_BRACE); } break;
+    case JTT_OPEN_BRACKET: { children = parse_json_nested(s, JTT_CLOSE_BRACKET); } break;
+    case JTT_STRING:
+    case JTT_NUMBER:
+    case JTT_TRUE:
+    case JTT_FALSE:
+    case JTT_NULL:
+    {} break;
+  }
+
+  JsonElementNode *result = NULL;
+  if (valid)
+  {
+    result = MEM_ARENA_PUSH_STRUCT_ZERO(s->arena, JsonElementNode);
+    result->label = label;
+    result->value = t.value;
+    result->children = children;
+  }
+
+  return result;
+}
+
+INTERNAL JsonElementNode *
+parse_json(JsonTokenArray a, MemArena *arena)
+{
+  JsonParserState s = {arena, a, 0};
+  String8 root_label = ZERO_STRUCT;
+  JsonToken first_token = consume_token(&s);
+
+  return parse_json_token(&s, root_label, first_token);
+}
+
+
+
+INTERNAL JsonElementNode *
+parse_json_list()
 {
 
 }
+
 
 /* INTERNAL bool
 token_equals(String8 f, JsonToken t, String8 m)
@@ -229,19 +344,6 @@ token_equals(String8 f, JsonToken t, String8 m)
   return str8_match(src, m, 0);
 }
 
-INTERNAL JsonToken
-consume_token(JsonTokeniser *t)
-{
-  if (t->at + 1 < t->array.count)
-  {
-    t->at += 1;
-    return t->array.tokens[t->at - 1];
-  }
-  else
-  {
-    return ZERO_STRUCT;
-  }
-}
 
 INTERNAL bool
 require_token(JsonTokeniser *t, TOKEN_TYPE type)
