@@ -116,13 +116,13 @@ lex_json(MemArena *arena, String8 str)
     switch (at[0])
     {
       case '\0': { t.type = JTT_EOS; } break;
-      case '{': { t.type = JTT_OPEN_BRACE; } break;
-      case '}': { t.type = JTT_CLOSE_BRACE; } break;
-      case '[': { t.type = JTT_OPEN_BRACKET; } break;
-      case ']': { t.type = JTT_CLOSE_BRACKET; } break;
-      case ',': { t.type = JTT_COMMA; } break;
-      case ':': { t.type = JTT_COLON; } break;
-      case ';': { t.type = JTT_SEMICOLON; } break;
+      case '{': { t.type = JTT_OPEN_BRACE; at += 1;} break;
+      case '}': { t.type = JTT_CLOSE_BRACE; at += 1;} break;
+      case '[': { t.type = JTT_OPEN_BRACKET; at += 1; } break;
+      case ']': { t.type = JTT_CLOSE_BRACKET; at += 1; } break;
+      case ',': { t.type = JTT_COMMA; at += 1; } break;
+      case ':': { t.type = JTT_COLON; at += 1; } break;
+      case ';': { t.type = JTT_SEMICOLON; at += 1; } break;
       case '"': 
       { 
         at += 1;
@@ -169,10 +169,9 @@ lex_json(MemArena *arena, String8 str)
     }
 
     JsonTokenNode *n = MEM_ARENA_PUSH_STRUCT(temp_arena.arena, JsonTokenNode);
-    n->token= t;
+    n->token = t;
     SLL_QUEUE_PUSH(first, last, n);
     token_count += 1;
-    at += (t.value.size == 1 ? 1 : 0);
   }
 
   JsonTokenArray a = ZERO_STRUCT;
@@ -237,7 +236,7 @@ struct JsonElementNode
 INTERNAL JsonToken
 consume_token(JsonParserState *s)
 {
-  if (s->at + 1 < s->array.count) return s->array.tokens[s->at++];
+  if (s->at + 1 <= s->array.count) return s->array.tokens[s->at++];
   else return ZERO_STRUCT;
 }
 
@@ -328,157 +327,78 @@ parse_json(JsonTokenArray a, MemArena *arena)
   return parse_json_token(&s, root_label, first_token);
 }
 
-
-
 INTERNAL JsonElementNode *
-parse_json_list()
+lookup_label_json(JsonElementNode *o, String8 label)
 {
+  if (o == NULL) return NULL;
 
-}
-
-
-/* INTERNAL bool
-token_equals(String8 f, JsonToken t, String8 m)
-{
-  String8 src = str8(f.content + t.range.min, range_u32_dim(t.range));
-  return str8_match(src, m, 0);
-}
-
-
-INTERNAL bool
-require_token(JsonTokeniser *t, TOKEN_TYPE type)
-{
-  JsonToken token = consume_token(t);
-  return (token.type == type);
-}
-
-INTERNAL void
-parse_introspectable_params(JsonTokeniser *t)
-{
-  while (true)
+  JsonElementNode *result = NULL;
+  for (JsonElementNode *n = o->children; n != NULL; n = n->next)
   {
-    JsonToken token = consume_token(t);
-    if (token.type == TOKEN_TYPE_CLOSE_PAREN ||
-        token.type == TOKEN_TYPE_EOS) break;
-  }
-}
-
-INTERNAL void
-parse_struct_member(JsonTokeniser *t, JsonToken struct_type, JsonToken member_type)
-{
-  bool is_pointer = false;
-  while (true)
-  {
-    JsonToken token = consume_token(t);
-    if (token.type == TOKEN_TYPE_ASTERISK)
+    if (str8_match(n->label, label, 0))
     {
-      is_pointer = true;
-    }
-    if (token.type == TOKEN_TYPE_IDENTIFIER)
-    {
-      printf("    {%s, meta_type_%.*s, \"%.*s\", (uintptr_t)&(((%.*s *)0)->%.*s)}, \n", 
-              is_pointer ? "MEMBER_TYPE_IS_POINTER" : "0",
-              TOKEN_VARG(t->f, member_type),
-              TOKEN_VARG(t->f, token),
-              TOKEN_VARG(t->f, struct_type),
-              TOKEN_VARG(t->f, token));
-    }
-    else if (token.type == TOKEN_TYPE_SEMICOLON ||
-        token.type == TOKEN_TYPE_EOS) break;
-  }
-}
-
-
-INTERNAL void
-parse_struct(JsonTokeniser *t)
-{
-  JsonToken name = consume_token(t);
-  if (require_token(t, TOKEN_TYPE_OPEN_BRACE))
-  {
-    printf("GLOBAL MemberDefinition g_members_of_%.*s[] = \n", TOKEN_VARG(t->f, name));
-    printf("{\n");
-    while (true)
-    {
-      JsonToken member_token = consume_token(t);
-      if (member_token.type == TOKEN_TYPE_CLOSE_BRACE ||
-          member_token.type == TOKEN_TYPE_EOS)
-      {
-        break;
-      }
-      else
-      {
-        parse_struct_member(t, name, member_token);
-      }
-    }
-    printf("};\n");
-
-    MetaStruct *s = MEM_ARENA_PUSH_STRUCT(t->arena, MetaStruct);
-    s->name = str8_fmt(t->arena, "%.*s", TOKEN_VARG(t->f, name));
-    SLL_STACK_PUSH(first_meta_struct, s);
-  }
-  else
-  {
-    WARN("struct requires {");
-  }
-}
-
-INTERNAL void
-parse_introspectable(JsonTokeniser *t)
-{
-  if (require_token(t, TOKEN_TYPE_OPEN_PAREN))
-  {
-    parse_introspectable_params(t);
-    JsonToken token = consume_token(t);
-    if (token_equals(t->f, token, str8_lit("struct")))
-    {
-      parse_struct(t);
-    }
-    else
-    {
-      WARN("instropect just for structs");
-    }
-  }
-  else
-  {
-    WARN("Require ( after instropect");
-  }
-}
-
-int
-main(int argc, char *argv[])
-{
-  global_debugger_present = linux_was_launched_by_gdb();
-  MemArena *arena = mem_arena_allocate(GB(8), MB(64));
-
-  ThreadContext tctx = thread_context_allocate(GB(8), MB(64));
-  tctx.is_main_thread = true;
-  thread_context_set(&tctx);
-  thread_context_set_name("Main Thread");
-
-  String8 f = str8_read_entire_file(arena, str8_lit("code/meta-test.h"));
-  JsonTokeniser tokeniser = lex(arena, f);
-  tokeniser.arena = arena;
-
-  while (true)
-  {
-    JsonToken t = consume_token(&tokeniser); 
-
-    //print_token(f, t);
-
-    if (t.type == TOKEN_TYPE_EOS) break;
-    else if (token_equals(f, t, str8_lit("introspect")))
-    {
-      parse_introspectable(&tokeniser);
+      result = n;
+      break;
     }
   }
 
-  printf("#define META_STRUCT_DUMP(member_ptr) \\ \n");
-  for (MetaStruct *s = first_meta_struct; s != NULL; s = s->next)
+  return result;
+}
+
+typedef struct JsonDataArray JsonDataArray;
+struct JsonDataArray
+{
+  Vector4 *data;
+  u32 count;
+};
+
+typedef struct Vector4Node Vector4Node;
+struct Vector4Node
+{
+  Vector4Node *next;
+  Vector4 value;
+};
+
+INTERNAL f32
+convert_json_object_element_to_f32(JsonElementNode *e, String8 label)
+{
+  JsonElementNode *n = lookup_label_json(e, label);
+  if (n == NULL) return 0.f;
+  return str8_to_real(n->value);
+}
+
+INTERNAL JsonDataArray
+parse_json_data(MemArena *arena, JsonElementNode *data)
+{
+  if (data == NULL) return ZERO_STRUCT;
+
+  Vector4Node *first = NULL;
+  u32 count = 0;
+  MemArenaTemp temp = mem_arena_temp_begin(NULL, 0);
+  MemArena *temp_arena = temp.arena;
+  for (JsonElementNode *e = data->children; e != NULL; e = e->next)
   {
-    printf("case meta_type_%.*s: dump_struct(member_ptr, members_of_%.*s, ARRAY_COUNT(members_of_%.*s), indent_level + 1); break; %s\n", 
-            str8_varg(s->name), str8_varg(s->name), str8_varg(s->name), 
-            s->next ? "\\" : "");
+    Vector4Node *n = MEM_ARENA_PUSH_STRUCT(temp_arena, Vector4Node);
+    n->value.x = convert_json_object_element_to_f32(e, str8_lit("w0"));
+    n->value.y = convert_json_object_element_to_f32(e, str8_lit("d0"));
+    n->value.z = convert_json_object_element_to_f32(e, str8_lit("w1"));
+    n->value.w = convert_json_object_element_to_f32(e, str8_lit("d1"));
+
+    SLL_STACK_PUSH(first, n);
+    count += 1;
   }
 
-  return 0;
-} */
+  JsonDataArray result = ZERO_STRUCT;
+  result.data = MEM_ARENA_PUSH_ARRAY(arena, Vector4, count);
+  result.count = count;
+
+  u32 j = 0;
+  for (Vector4Node *n = first; n != NULL; n = n->next)
+  {
+    result.data[j++] = n->value;
+  }
+
+  mem_arena_temp_end(temp);
+
+  return result;
+}
