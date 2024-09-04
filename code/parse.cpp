@@ -1,5 +1,168 @@
 // SPDX-License-Identifier: zlib-acknowledgement
 
+#define MAGIC_FILE_VALUE 0xFEEDFACE
+typedef struct FileHeader
+{
+  u32 magic_value;
+} PACKED_STRUCT FileHeader;
+typedef struct FileEntry
+{
+  u32 x0, y0, x1, y1;
+} PACKED_STRUCT FileEntry;
+
+typedef struct FileArray
+{
+  FileEntry *entries;
+  u32 count;
+} FileArray;
+
+INTERNAL void
+gen_file(String8 name, u32 entry_count)
+{
+  MemArenaTemp temp = mem_arena_temp_begin(NULL, 0);
+  MemArena *arena = temp.arena;
+
+  u32 file_size = sizeof(FileHeader) + sizeof(FileEntry) * entry_count;
+  String8Buffer b = str8buffer_allocate(arena, file_size);
+  FileHeader h = {MAGIC_FILE_VALUE};
+  STR8BUFFER_APPEND(&b, &h);
+
+  u32 seed = linux_get_seed_u32();
+  for (u32 i = 0; i < entry_count; i += 1)
+  {
+    FileEntry e = {
+        1 + u32_rand_range(&seed, 20),
+        1 + u32_rand_range(&seed, 20),
+        120 + u32_rand_range(&seed, 20),
+        120 + u32_rand_range(&seed, 20),
+    };
+
+    STR8BUFFER_APPEND(&b, &e);
+  }
+
+  str8_write_entire_file(name, b.string8);
+
+  mem_arena_temp_end(temp);
+}
+
+INTERNAL FileArray
+read_file(MemArena *arena, String8 name)
+{
+  MemArenaTemp temp = mem_arena_temp_begin(NULL, 0);
+  MemArena *temp_arena = temp.arena;
+  String8 data = str8_read_entire_file(temp_arena, name);
+  
+  FileHeader *header = (FileHeader *)data.content;
+  ASSERT(header->magic_value == MAGIC_FILE_VALUE);
+
+  FileArray a = ZERO_STRUCT;
+  u32 entries_size = data.size - sizeof(FileHeader);
+  u32 entries_count = entries_size / sizeof(FileEntry);
+  a.entries = MEM_ARENA_PUSH_ARRAY(arena, FileEntry, entries_count);
+  a.count = entries_count;
+  u8 *entries_base = (u8 *)data.content + sizeof(FileHeader);
+  MEMORY_COPY(a.entries, entries_base, entries_size);
+
+  mem_arena_temp_end(temp);
+
+  return a;
+}
+
+INTERNAL u64
+sum_file_entries(FileArray a)
+{
+
+  FileEntry *src = a.entries;
+  u32 sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
+
+  for (u32 i = 0; i < a.count/4; i += 4)
+  {
+    sum0 += src[0].x0 + src[0].y0 + src[0].x1 + src[0].y1;
+    sum1 += src[1].x0 + src[1].y0 + src[1].x1 + src[1].y1;
+    sum2 += src[2].x0 + src[2].y0 + src[2].x1 + src[2].y1;
+    sum3 += src[3].x0 + src[3].y0 + src[3].x1 + src[3].y1;
+
+    src += 4;
+  }
+
+  return sum0 + sum1 + sum2 + sum3;
+}
+
+typedef enum OVERLAPPED_BUFFER_STATE
+{
+  OBS_UNUSED,
+  OBS_READ_COMPLETED
+};
+typedef struct OverlappedBuffer OverlappedBuffer;
+struct OverlappedBuffer
+{
+  volatile OVERLAPPED_BUFFER_STATE state;
+  String8 value;
+  volatile u64 read_size;
+};
+typedef struct OverlappedFileParse OverlappedFileParse;
+struct OverlappedFileParse
+{
+  FILE *fp;
+  OverlappedBuffer buffers[2];
+  String8 file_name;
+  u64 total_size;
+  u64 bytes_read;
+};
+
+thread_function
+example(void *params)
+{
+  ThreadCtx tctx = ThreadCtxAlloc();
+  SetThreadCtx(&tctx);
+  SetThreadName();
+  // now, inside each thread can do ScratchBegin()
+  // for communication between threads, could just be global struct
+  ThreadCtxRelease(&tctx);
+}
+
+INTERNAL void
+overlapped_read_and_sum(u32 buffer_size)
+{
+  OverlappedFileParse overlapped_parse = ZERO_STRUCT;
+  overlapped_parse.fp = fopen("");
+  ASSERT(overlapped_parse.fp != NULL);
+  overlapped_parse.buffers[0].value = str8_allocate(buffer_size);
+  overlapped_parse.buffers[1].value = str8_allocate(buffer_size);
+
+  thread io_thread = thread_start();
+  thread_ptr_t process_thread = thread_create( imgedit_process_thread, &imgedit, THREAD_STACK_SIZE_DEFAULT );
+  // thread_join( process_thread );
+
+
+  if (io_thread_valid)
+  {
+    u32 buffer_i = 0;
+    u32 size_remaining = total_file_size;  
+    while (size_remaining > 0)
+    {
+      OverlappedBuffer *b = &overlapped_parse.buffers[buffer_i++ & 1];
+      while (b->state != OBS_READ_COMPLETED) { thread_sleep(); }
+
+      COMPILER_HARDWARE_BARRIER; 
+      read_size = b->read_size;
+      sum_result = sum_u32s(read_size, b->value.content);
+      COMPILER_HARDWARE_BARRIER; 
+      
+      b->state = STATE_UNUSED;
+
+      size_remaining -= read_size;
+    }
+
+    if (overlapped_parse.file_error) {}
+  }
+
+  return sum_result;
+}
+
+
+
+
 INTERNAL void
 gen_json_data(String8 file_name, u32 pair_count)
 {
