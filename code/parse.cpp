@@ -69,13 +69,14 @@ read_file(MemArena *arena, String8 name)
 }
 
 INTERNAL u64
-sum_file_entries(FileArray a)
+sum_as_file_entries(void *data, u32 data_size)
 {
+  FileEntry *src = (FileEntry *)data;
 
-  FileEntry *src = a.entries;
   u32 sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
+  u32 sum_count = data_size / (4 * sizeof(FileEntry));
 
-  for (u32 i = 0; i < a.count/4; i += 4)
+  while (sum_count-- > 0)
   {
     sum0 += src[0].x0 + src[0].y0 + src[0].x1 + src[0].y1;
     sum1 += src[1].x0 + src[1].y0 + src[1].x1 + src[1].y1;
@@ -88,74 +89,100 @@ sum_file_entries(FileArray a)
   return sum0 + sum1 + sum2 + sum3;
 }
 
-typedef enum OVERLAPPED_BUFFER_STATE
+typedef enum 
 {
-  OBS_UNUSED,
-  OBS_READ_COMPLETED
-};
-typedef struct OverlappedBuffer OverlappedBuffer;
-struct OverlappedBuffer
+  ABS_UNUSED,
+  ABS_READ_COMPLETED
+} ASYNC_BUFFER_STATE;
+typedef struct AsyncBuffer AsyncBuffer;
+struct AsyncBuffer
 {
-  volatile OVERLAPPED_BUFFER_STATE state;
+  volatile ASYNC_BUFFER_STATE state;
   String8 value;
-  volatile u64 read_size;
+  volatile u64 size_read;
 };
-typedef struct OverlappedFileParse OverlappedFileParse;
-struct OverlappedFileParse
+typedef struct AsyncState AsyncState;
+struct AsyncState
 {
-  FILE *fp;
-  OverlappedBuffer buffers[2];
-  String8 file_name;
-  u64 total_size;
-  u64 bytes_read;
+  AsyncFile async_file;
+  AsyncBuffer buffers[2];
+  b32 file_error;
 };
 
-thread_function
-example(void *params)
+void *
+file_reader_thread(void *param)
 {
-  ThreadCtx tctx = ThreadCtxAlloc();
-  SetThreadCtx(&tctx);
-  SetThreadName();
-  // now, inside each thread can do ScratchBegin()
-  // for communication between threads, could just be global struct
-  ThreadCtxRelease(&tctx);
+  // IMPORTANT(Ryan): Get thread access to temp arenas
+  ThreadContext tctx = thread_context_allocate(GB(8), MB(64));
+  tctx.is_main_thread = false;
+  thread_context_set(&tctx);
+  thread_context_set_name("IO Thread");
+
+  AsyncState *as = (AsyncState *)param;
+  u32 buffer_i = 0;
+  u64 size_remaining = as->async_file.file_size;
+  while (size_remaining > 0)
+  {
+    AsyncBuffer *buf = &as->buffers[buffer_i++ & 1];
+
+    u64 read_size = buf->value.size;
+    if (read_size > size_remaining) read_size = size_remaining;
+    while (buf->state != ABS_UNUSED) { thread_yield(); }
+
+    COMPILER_HARDWARE_BARRIER; 
+    if (fread(buf->value.content, read_size, 1, as->async_file.fp) != 1) as->file_error = true;
+    buf->size_read = read_size;
+    COMPILER_HARDWARE_BARRIER; 
+
+    buf->state = ABS_READ_COMPLETED;
+    size_remaining -= read_size;
+  }
+
+  thread_context_deallocate(&tctx);
+
+  // NOTE(Ryan): Value obtained with thread_join()
+  return NULL;
 }
 
-INTERNAL void
-overlapped_read_and_sum(u32 buffer_size)
+INTERNAL u64
+async_read_and_sum(const char *file_name, u32 buffer_size)
 {
-  OverlappedFileParse overlapped_parse = ZERO_STRUCT;
-  overlapped_parse.fp = fopen("");
-  ASSERT(overlapped_parse.fp != NULL);
-  overlapped_parse.buffers[0].value = str8_allocate(buffer_size);
-  overlapped_parse.buffers[1].value = str8_allocate(buffer_size);
+  MemArenaTemp temp = mem_arena_temp_begin(NULL, 0);
+  MemArena *arena = temp.arena;
 
-  thread io_thread = thread_start();
-  thread_ptr_t process_thread = thread_create( imgedit_process_thread, &imgedit, THREAD_STACK_SIZE_DEFAULT );
-  // thread_join( process_thread );
+  AsyncState as = ZERO_STRUCT;
+  as.async_file = open_async_file(file_name);
+  ASSERT(as.async_file.fp != NULL);
+  as.buffers[0].value = str8_allocate(arena, buffer_size);
+  as.buffers[1].value = str8_allocate(arena, buffer_size);
+  u64 sum_result = 0;
 
-
-  if (io_thread_valid)
+  thread_handle file_reader_thread_handle = start_thread(file_reader_thread, &as);
+  if (file_reader_thread_handle != NULL)
   {
     u32 buffer_i = 0;
-    u32 size_remaining = total_file_size;  
+    u32 size_remaining = as.async_file.file_size;  
     while (size_remaining > 0)
     {
-      OverlappedBuffer *b = &overlapped_parse.buffers[buffer_i++ & 1];
-      while (b->state != OBS_READ_COMPLETED) { thread_sleep(); }
+      AsyncBuffer *buf = &as.buffers[buffer_i++ & 1];
+      while (buf->state != ABS_READ_COMPLETED) { thread_yield(); }
 
       COMPILER_HARDWARE_BARRIER; 
-      read_size = b->read_size;
-      sum_result = sum_u32s(read_size, b->value.content);
+      u32 size_read = buf->size_read;
+      sum_result += sum_as_file_entries(buf->value.content, size_read);
       COMPILER_HARDWARE_BARRIER; 
       
-      b->state = STATE_UNUSED;
+      buf->state = ABS_UNUSED;
 
-      size_remaining -= read_size;
+      size_remaining -= size_read;
     }
 
-    if (overlapped_parse.file_error) {}
+    if (as.file_error) { WARN("Encountered a file error %s", strerror(errno)); }
   }
+
+  fclose(as.async_file.fp);
+
+  mem_arena_temp_end(temp);
 
   return sum_result;
 }
