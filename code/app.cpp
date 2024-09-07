@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
   u32 screen_height = 1080;
   SetTraceLogLevel(LOG_WARNING); 
   SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
-  InitWindow(screen_width, screen_height, "Game");
+  InitWindow(screen_width, screen_height, "Music Visualiser");
   SetTargetFPS(60);
 
   InitAudioDevice();

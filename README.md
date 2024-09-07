@@ -4,6 +4,8 @@
 
 Music visualiser app
 
+![Preview Image](assets/preview.png)
+
 ## Linux
 ```
 # Build raylib dependency
