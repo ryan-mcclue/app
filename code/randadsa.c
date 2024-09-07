@@ -703,6 +703,9 @@ draw_slider(Rectangle region, COLOR_MODE mode, f32 value, b32 *dragging, Colour 
   return value;
 } */
 
+// loading JSON file from million song dataset subset
+// for each song get duration and number of words in name and base calculations off that
+
 // other state would be: b32 *expanded
 INTERNAL void
 draw_slider(Rectangle region, f32 *value, b32 *dragging)
@@ -789,6 +792,8 @@ draw_scroll_region(Rectangle r)
 
   if (scrollable_area > r.height)
   {
+    btn_w -= scroll_w;
+
     Vector2 mouse = GetMousePosition();
     if (CheckCollisionPointRec(mouse, r))
     {
@@ -802,13 +807,15 @@ draw_scroll_region(Rectangle r)
     if (g_state->scroll > max_scroll) g_state->scroll = max_scroll;
 
     Rectangle scroll_bg = {r.x + r.width - scroll_w, r.y, scroll_w, r.height};
-    push_rect(scroll_bg, COLOR_RED_ACCENT);
+    push_rect(scroll_bg, COLOR_BLUE_ACCENT);
 
     f32 scroll_off_t = g_state->scroll / scrollable_area;
     f32 scroll_h_t = r.height / scrollable_area;
-    Rectangle scroll_fg = {scroll_bg.x, r.y + r.height * scroll_off_t,
-                           scroll_w - 5.f, r.height * scroll_h_t};
-    push_rect(scroll_fg, COLOR_GREEN_ACCENT);
+    f32 scroll_bar_padding = scroll_w * 0.1f;
+    f32 scroll_bar_w = scroll_w - 2.f*scroll_bar_padding;
+    Rectangle scroll_fg = {scroll_bg.x + scroll_bar_padding, r.y + r.height * scroll_off_t,
+                           scroll_bar_w, r.height * scroll_h_t};
+    push_rect(scroll_fg, COLOR_CYAN_ACCENT);
   }
   
   // push_start_scissor(r); BeginScissorMode(r.x, r.y, r.width, r.height);
@@ -849,7 +856,7 @@ draw_scroll_region(Rectangle r)
     } 
     else if (bs & BS_HOVERING)
     {
-      String8 s = str8_fmt(g_state->frame_arena, "%f", GetMusicTimeLength(m->music));
+      String8 s = str8_fmt(g_state->frame_arena, "Length: %us", (u32)GetMusicTimeLength(m->music));
       draw_tooltip(btn_r, (const char *)s.content, RA_RIGHT);
       c = ColorBrightness(c, 0.1);
     }
@@ -862,41 +869,20 @@ draw_scroll_region(Rectangle r)
 // this computes the intersection of two rectangles
 // useful for BeginScissorMode()
 
-/*   //- rjf: draw cursor information
-  if(cursor_viz_data.is_active && UI_KeyMatch(box->key, cursor_viz_data.key)) {
-   Vec4F32 color = UI_TopCursorColor();
-   F32 cursor_blink_t = UI_CursorBlinkT(); (blink_t += dt every frame)
-   F32 cursor_thickness = UI_TopFontSize()*0.5f;
-   cursor_thickness = ClampBot(cursor_thickness, 3.f);
-   color.alpha = color.alpha * (0.6f + Cos(0.5f * cursor_blink_t / OS_CaretBlinkTime())*0.4f);
-   
-   F32 velocity_factor = cursor_viz_data.velocity * 0.8f;
-   F32 min_velocity_factor = ClampTop(0, velocity_factor);
-   F32 max_velocity_factor = ClampBot(0, velocity_factor);
-   
-   Vec2F32 box_text_pos = UI_TextPosFromBox(box);
-   Rng2F32 rect = {0};
-   {
-    rect.x0 = box_text_pos.x + cursor_viz_data.p.x - cursor_thickness/2 + min_velocity_factor;
-    rect.y0 = box->rect.y0 + box->ext_text->font_size/4.f - AbsoluteValueF32(velocity_factor)*box->ext_text->font_size*0.035f;
-    rect.x1 = box_text_pos.x + cursor_viz_data.p.x + cursor_thickness/2 + max_velocity_factor;
-    rect.y1 = box->rect.y1 - box->ext_text->font_size/4.f + AbsoluteValueF32(velocity_factor)*box->ext_text->font_size*0.035f;
-   };
-   D_Rect2D(rect, .color = color, .corner = 1.f, .softness = 1.f);
-  } */
-
 INTERNAL Color
-lerp_color(Color a, Color b, f32 t)
+lerp_color(Color *a, Color *b, f32 t)
 {
-  return {
-    255.0f * f32_lerp(a.r, b.r, t),
-    255.0f * f32_lerp(a.g, b.g, t),
-    255.0f * f32_lerp(a.b, b.b, t),
-    255.0f * f32_lerp(a.a, b.a, t),
+  Color res = {
+    (u8)f32_lerp(a->r, b->r, t),
+    (u8)f32_lerp(a->g, b->g, t),
+    (u8)f32_lerp(a->b, b->b, t),
+    (u8)f32_lerp(a->a, b->a, t),
   };
+
+  return res;
 }
 
-INTERNAL
+/* INTERNAL
 void draw_text_input(Rectangle r)
 {
   // TODO: selection: engine programming 5-6
@@ -935,10 +921,31 @@ void draw_text_input(Rectangle r)
 INTERNAL void
 handle_text_input_u32(Rectangle r, u32 *value)
 {
+  // computing cursor distance from glyph positions for cursor movement
+  // so, no rescaled text, this way can just iterate through font glyphs dimensions
+
+  if (!*dragging )
+  {
+    if (hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+      *dragging = true;
+
+      selection_info.min = index_point;
+      selection_info.max = index_point;
+    }
+  }
+  else
+  {
+    selection.max = index_point;
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) *dragging = false;
+    g_state->text_input_cursor_t = (mouse.x - r.x) / r.width;
+  }
+
   if (IsKeyPressed(KEY_ENTER))
   {
     g_state->text_input_active = false; 
     // parse_and_store_input_text();
+    // expression parser: jon-blow operator precedence + haversine parser
     *value = (u32)str8_to_int(g_state->text_input_buffer);
   }
   if ((IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT)) && 
@@ -979,6 +986,13 @@ handle_text_input_u32(Rectangle r, u32 *value)
 
   // draw rect base
 
+  // draw selection
+  Color selection_color = BLACK;
+  u32 min = MIN(selection.min, selection.max);
+  u32 max = MAX(selection.min, selection.max);
+  f32 width = (max - min) * ch_width;
+  Rectangle s_rect = {r.x + selection.min * ch_width, r.y, width, height};
+
   // draw text
   // DrawTextEx(g_state->input_buffer, left_align_text_pos)
 
@@ -996,23 +1010,48 @@ handle_text_input_u32(Rectangle r, u32 *value)
   // cursor_color = lerp(cursor_c, button_bg, t);
   push_rect(cursor_r, cursor_color);
 
-}
+} */
 
 INTERNAL void
-draw_color_picker(Rectangle r)
+draw_correlation_region(Rectangle r, f32 correlation)
 {
   push_rect(r, COLOR_BG1);
 
+  char *label = "Music Correlation:";
+  f32 font_size = g_state->font.baseSize * 2.f;
+  Vector2 text_size = MeasureTextEx(g_state->font, label, font_size, 0.f);
+  Vector2 margin = {font_size * 0.5f, font_size * 0.1f};
+  Vector2 size = {text_size.x + margin.x * 2.f, text_size.y + margin.y * 2.f};
+  Rectangle rect = align_rect(r, size, RA_CENTRE);
+  push_text(label, g_state->font, font_size, {rect.x, rect.y}, COLOR_FONT);
+
+  const char *text = "";
+  Color c = ZERO_STRUCT;
+  if (correlation < 0.25f)
+  {
+    text = "low"; c = COLOR_GREEN_ACCENT;
+  }
+  else if (correlation > 0.75f)
+  {
+    text = "high"; c = COLOR_RED_ACCENT;
+  }
+  else
+  {
+    text = "medium"; c = COLOR_YELLOW_ACCENT;
+  }
+  push_text(text, g_state->font, font_size, {rect.x + rect.width + 5.f, rect.y}, c);
   // if (mouse_released_over_field) draw_text_input(r, INPUT_RED_COMPONENT, red_width)
 }
 
 INTERNAL void
 draw_fft(Rectangle r, f32 *samples, u32 num_samples)
 {
+  // TODO: volume slider
   push_rect(r, COLOR_BG0);
 
   Rectangle play_slider = cut_rect_bottom(r, 0.9f);
   r = cut_rect_top(r, 0.9f);
+  r.x += 5.0f;
 
   MusicFile *active = DEREF_MUSIC_FILE_HANDLE(g_state->active_music_handle);
   if (!ZERO_MUSIC_FILE(active))
@@ -1040,7 +1079,9 @@ draw_fft(Rectangle r, f32 *samples, u32 num_samples)
     }
   }
 
-  f32 bin_w = r.width / num_samples;
+  f32 bin_w = 0.f;
+  if (!f32_eq(num_samples, 0.f)) bin_w = (r.width / num_samples);
+
   for (u32 i = 0; i < num_samples; i += 1)
   {
     f32 bin_h = samples[i] * r.height;
@@ -1155,70 +1196,123 @@ code_update(State *state)
   }
   UpdateMusicStream(active->music);
 
-  // :fft music
-  for (u32 i = 0, j = state->samples_ring.head; 
-       i < NUM_SAMPLES; 
-       i += 1, j = (j - 1) % NUM_SAMPLES)
+  if (!IsMusicReady(active->music))
   {
-    // we are multiplying by 1Hz, so shifting frequencies.
-    f32 t = (f32)i / (NUM_SAMPLES - 1);
-    state->hann_samples[i] = hann_function(state->samples_ring.samples[j], t);
-  }
+    const char *text = "Drag 'n' Drop Music";
+    f32 font_size = rh * 0.15f;
 
-  fft(state->hann_samples, 1, state->fft_samples, NUM_SAMPLES);
+    //Color backing_colour = {255, 173, 0, 255};
+    Color backing_colour = COLOR_ORANGE_ACCENT;
+    Color front_start_colour = WHITE;
+    Color front_end_colour = {255, 222, 0, 255}; 
 
-  f32 max_power = 1.0f;
-  for (u32 i = 0; i < HALF_SAMPLES; i += 1)
-  {
-    f32 power = F32_LN(f32z_power(state->fft_samples[i]));
-    if (power > max_power) max_power = power;
-  }
+    f32 t_base = 0.4f;
+    f32 t_range = 0.54f;
 
-  u32 num_bins = 0;
-  for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
-  {
-    num_bins += 1;
-  }
+    f64 delta = (GetTime() - state->mouse_last_moved_time);
 
-  u32 j = 0;
-  for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
-  {
-    f32 next_f = F32_CEIL(f * 1.06f);
-    f32 bin_power = 0.0f;
-    for (u32 i = (u32)f; i < HALF_SAMPLES && i < (u32)next_f; i += 1)
+    f32 flash_duration = 1.0f; // 1 second
+    f32 s = delta / flash_duration;
+    s = SQUARE(s); // F32_SQRT(F32_ABS(s)); linear to hump
+    s = 1 - s; // ease-out
+    if (delta < flash_duration)
     {
-      f32 p = F32_LN(f32z_power(state->fft_samples[i]));
-      if (p > bin_power) bin_power = p;
+      //Color new_front_start_colour = {255, 0, 255, 255};
+      Color new_front_start_colour = COLOR_MAGENTA_ACCENT;
+      front_start_colour = lerp_color(&front_start_colour, &new_front_start_colour, s);
+
+      //Color new_front_end_colour = {255, 0, 0, 255};
+      Color new_front_end_colour = COLOR_RED_ACCENT;
+      front_end_colour = lerp_color(&front_end_colour, &new_front_end_colour, s);
+
+      t_range += (0.2f - t_range) * s; 
     }
 
-    f32 target_t = bin_power / max_power;
-    state->draw_samples[j] += (target_t - state->draw_samples[j]) * 8 * dt;
+    f32 t = F32_COS(g_state->frame_counter * 3 * dt);
+    t *= t;
+    t = t_base + t_range * t;
+    Color front_colour = lerp_color(&front_start_colour, &front_end_colour, t);
 
-    j += 1;
+    u32 offset = state->font.baseSize / 40;
+
+    Vector2 t_size = MeasureTextEx(state->font, text, font_size, 0.f);
+    Vector2 t_vec = {
+      rw/2.0f - t_size.x/2.0f,
+      rh/2.0f - t_size.y/2.0f
+    };
+    Vector2 b_vec = {
+      t_vec.x + offset,
+      t_vec.y - offset,
+    };
+
+    push_text(text, state->font, font_size, t_vec, backing_colour);
+    push_text(text, state->font, font_size, b_vec, front_colour);
   }
+  else
+  {
+    // :fft music
+    for (u32 i = 0, j = state->samples_ring.head;
+         i < NUM_SAMPLES;
+         i += 1, j = (j - 1) % NUM_SAMPLES)
+    {
+      // we are multiplying by 1Hz, so shifting frequencies.
+      f32 t = (f32)i / (NUM_SAMPLES - 1);
+      state->hann_samples[i] = hann_function(state->samples_ring.samples[j], t);
+    }
 
-  Rectangle render_region = {0.f, 0.f, (f32)rw, (f32)rh};
-  f32 color_region_t = 0.7f;
-  Rectangle color_region = cut_rect_bottom(render_region, color_region_t);
+    fft(state->hann_samples, 1, state->fft_samples, NUM_SAMPLES);
 
-  Rectangle top_region = cut_rect_top(render_region, color_region_t);
-  f32 scroll_region_t = 0.2f;
-  Rectangle scroll_region = cut_rect_left(top_region, scroll_region_t);
-  Rectangle fft_region = cut_rect_right(top_region, scroll_region_t);
+    f32 max_power = 1.0f;
+    for (u32 i = 0; i < HALF_SAMPLES; i += 1)
+    {
+      f32 power = F32_LN(f32z_power(state->fft_samples[i]));
+      if (power > max_power)
+        max_power = power;
+    }
 
-  draw_scroll_region(scroll_region);
-  draw_fft(fft_region, state->draw_samples, num_bins);
-  draw_color_picker(color_region);
+    u32 num_bins = 0;
+    for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
+    {
+      num_bins += 1;
+    }
 
-  Rectangle text_r = {color_region.x + 50, color_region.y + 50, 600, 100};
-  draw_text_input(text_r);
-/*
-  Rectangle slider_region = {rw*.2f, rh*.2f, rw*.5f, rh*.1f};
-  DrawRectangleRec(slider_region, {255, 10, 20, 255});
-  draw_volume_slider(slider_region);
+    u32 j = 0;
+    for (f32 f = 1.0f; (u32)f < HALF_SAMPLES; f = F32_CEIL(f * 1.06f))
+    {
+      f32 next_f = F32_CEIL(f * 1.06f);
+      f32 bin_power = 0.0f;
+      for (u32 i = (u32)f; i < HALF_SAMPLES && i < (u32)next_f; i += 1)
+      {
+        f32 p = F32_LN(f32z_power(state->fft_samples[i]));
+        if (p > bin_power)
+          bin_power = p;
+      }
 
-  Rectangle r = {800, 800, 200, 200};
-  draw_button(r); */
+      f32 target_t = bin_power / max_power;
+      state->draw_samples[j] += (target_t - state->draw_samples[j]) * 8 * dt;
+
+      j += 1;
+    }
+
+    Rectangle render_region = {0.f, 0.f, (f32)rw, (f32)rh};
+    f32 color_region_t = 0.7f;
+    Rectangle correlation_region = cut_rect_bottom(render_region, color_region_t);
+
+    Rectangle top_region = cut_rect_top(render_region, color_region_t);
+    f32 scroll_region_t = 0.2f;
+    Rectangle scroll_region = cut_rect_left(top_region, scroll_region_t);
+    Rectangle fft_region = cut_rect_right(top_region, scroll_region_t);
+
+    draw_scroll_region(scroll_region);
+    draw_fft(fft_region, state->draw_samples, num_bins);
+
+    // GetMusicTimeLength(active->music) / active->music_name_length;
+    // f32 correlation = state->dataset_sum / 
+    draw_correlation_region(correlation_region, 0.5f);
+
+    Rectangle text_r = {correlation_region.x + 50, correlation_region.y + 50, 600, 100};
+    // draw_text_input(text_r);
+  }
 
   render_elements();
 
@@ -1231,245 +1325,3 @@ code_update(State *state)
 }
 
 PROFILER_END_OF_COMPILATION_UNIT
-
-
-#if !defined(DESKTOP_H)
-#define DESKTOP_H
-
-#include "base/base-inc.h"
-#include "desktop-assets.h"
-#include <raylib.h>
-#include <raymath.h>
-
-#define V2(x, y) CCOMPOUND(Vector2){(f32)x, (f32)y}
-#if defined(LANG_CPP)
-INTERNAL Vector2 operator*(Vector2 a, Vector2 b) { return Vector2Multiply(a, b); }
-INTERNAL Vector2 operator*(f32 s, Vector2 a) { return Vector2Scale(a, s); }
-INTERNAL Vector2 operator*(Vector2 a, f32 s) { return Vector2Scale(a, s); }
-INTERNAL Vector2 & operator*=(Vector2 &a, f32 s) { a = a * s; return a; } 
-
-INTERNAL Vector2 operator+(f32 b, Vector2 a) { return Vector2AddValue(a, b); }
-INTERNAL Vector2 operator+(Vector2 a, f32 b) { return Vector2AddValue(a, b); }
-INTERNAL Vector2 operator+(Vector2 a, Vector2 b) { return Vector2Add(a, b); }
-INTERNAL Vector2 & operator+=(Vector2 &a, Vector2 b) { a = a + b; return a; }
-
-INTERNAL Vector2 operator-(f32 b, Vector2 a) { return Vector2SubtractValue(a, b); }
-INTERNAL Vector2 operator-(Vector2 a, f32 b) { return Vector2SubtractValue(a, b); }
-INTERNAL Vector2 operator-(Vector2 a, Vector2 b) { return Vector2Subtract(a, b); }
-INTERNAL Vector2 & operator-=(Vector2 &a, Vector2 b) { a = a - b; return a; }
-INTERNAL Vector2 operator-(Vector2 a) { return Vector2Negate(a); }
-
-INTERNAL bool operator==(Vector2 a, Vector2 b) { return f32_eq(a.x, b.x) && f32_eq(a.y, b.y); }
-INTERNAL bool operator!=(Vector2 a, Vector2 b) { return !(a == b); }
-#endif
-
-#define MAX_MUSIC_FILE_NAME_LENGTH 64
-typedef struct MusicFile MusicFile;
-struct MusicFile
-{
-  char file_name[MAX_MUSIC_FILE_NAME_LENGTH];
-  bool is_active;
-  Music music;
-  u64 gen;
-};
-GLOBAL MusicFile g_zero_music_file;
-#define DEREF_MUSIC_FILE_HANDLE(h) \
-  (((h.addr) == NULL || (h.gen != ((MusicFile *)(h.addr))->gen)) ? &g_zero_music_file : (MusicFile *)(h.addr))
-#define ZERO_MUSIC_FILE(ptr) \
-  (ptr == &g_zero_music_file) 
-#define MAX_MUSIC_FILES 64
-
-// IMPORTANT(Ryan): The number of samples limits number of frequencies we can derive
-// This seems to be a good number for a decent visualisation
-// Also, as displaying logarithmically, we don't actually have this large number
-#define NUM_SAMPLES (1 << 13) 
-STATIC_ASSERT(IS_POW2(NUM_SAMPLES));
-#define HALF_SAMPLES (NUM_SAMPLES >> 1)
-struct SampleRing
-{
-  f32 samples[NUM_SAMPLES];
-  u32 head;
-};
-
-typedef enum
-{
-  RA_NIL = 0,
-  RA_TOP,
-  RA_RIGHT,
-  RA_BOTTOM,
-  RA_LEFT,
-  RA_CENTRE,
-  RA_LEFT_INNER
-} RECT_ALIGN;
-
-typedef enum
-{
-  RE_NIL = 0,
-  RE_RECT,
-  RE_RECT_OUTLINE,
-  RE_TEXT,
-  RE_CIRCLE,
-  RE_LINE,
-  RE_TEXTURE,
-} RENDER_ELEMENT_TYPE;
-
-typedef enum
-{
-  Z_LAYER_NIL = 0,
-  Z_LAYER_TOOLTIP,
-} Z_LAYER;
-
-typedef struct RenderElement RenderElement;
-struct RenderElement
-{
-  RENDER_ELEMENT_TYPE type;
-
-  RenderElement *next;
-
-  Z_LAYER z;
-  Color colour;
-
-  Rectangle rec;
-  f32 roundness;
-  u32 segments;
-
-  f32 radius;
-
-  f32 thickness;
-
-  Font font;
-  f32 font_size;
-  char *text;
-
-  Texture texture;
-  f32 scale;
-};
-
-
-typedef struct RenderSortElement RenderSortElement;
-struct RenderSortElement
-{
-  Z_LAYER z;
-  RenderElement *element;
-};
-
-typedef struct ZLayerNode ZLayerNode; 
-struct ZLayerNode
-{
-  ZLayerNode *next;
-  Z_LAYER value;
-};
-
-typedef struct AlphaNode AlphaNode; 
-struct AlphaNode
-{
-  AlphaNode *next;
-  f32 value;
-};
-
-typedef struct MouseCursorNode MouseCursorNode; 
-struct MouseCursorNode
-{
-  MouseCursorNode *next;
-  MouseCursor value;
-};
-
-typedef struct State State;
-INTROSPECT() struct State
-{
-  b32 is_initialised;
-
-  Assets assets;
-
-  MemArena *arena;
-  MemArena *frame_arena;
-  u64 frame_counter;
-
-  Font font;
-
-  b32 hover_consumed;
-  b32 left_click_consumed;
-
-  MouseCursorNode *mouse_cursor_stack;
-  AlphaNode *alpha_stack;
-  ZLayerNode *z_layer_stack;
-  RenderElement *render_element_first, *render_element_last;
-  u32 render_element_queue_count;
-  u64 active_button_id;
-
-  b32 text_input_active;
-  char text_input_buffer[64];
-  u32 text_input_buffer_at;
-  u32 text_input_buffer_len;
-
-  u32 text_input_val;
-
-  MusicFile music_files[MAX_MUSIC_FILES];
-  Handle active_music_handle;
-  u32 num_loaded_music_files;
-  f32 active_music_slider_value;
-  b32 active_music_slider_dragging;
-  b32 is_music_paused;
-
-  f32 scroll;
-  f32 scroll_velocity;
-
-  SampleRing samples_ring;
-  f32 hann_samples[NUM_SAMPLES];
-  f32z fft_samples[NUM_SAMPLES];
-  f32 draw_samples[HALF_SAMPLES];
-
-  f32 mouse_last_moved_time;
-};
-
-typedef void (*code_preload_t)(State *s);
-typedef void (*code_update_t)(State *s);
-typedef void (*code_postload_t)(State *s);
-typedef void (*code_profiler_end_and_print_t)(State *s);
-
-typedef struct ReloadCode ReloadCode;
-struct ReloadCode
-{
-  code_preload_t preload;
-  code_update_t update;
-  code_postload_t postload;
-  code_profiler_end_and_print_t profiler_end_and_print;
-};
-
-GLOBAL f32 g_dbg_at_y;
-extern State *g_state; 
-INTERNAL void
-draw_debug_text(String8 s)
-{
-  char text[64] = ZERO_STRUCT;
-  str8_to_cstr(s, text, sizeof(text));
-  DrawText(text, 50.f, g_dbg_at_y, 48, RED);
-  g_dbg_at_y += 50.f;
-}
-#if DEBUG_BUILD
-#define DBG_U32(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu32, var))
-#define DBG_S32(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRId32, var))
-#define DBG_U64(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRIu64, var))
-#define DBG_S64(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %" PRId64, var))
-#define DBG_F32(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %f", var))
-#define DBG_F64(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = %lf", var))
-#define DBG_V2(var) \
-  draw_debug_text(str8_fmt(g_state->frame_arena, STRINGIFY(var) " = (%f, %f)", var.x, var.y))
-#else
-#define DBG_U32(var)
-#define DBG_S32(var)
-#define DBG_U64(var)
-#define DBG_S64(var)
-#define DBG_F32(var)
-#define DBG_F64(var)
-#define DBG_V2(var)
-#endif
-
-
-#endif
