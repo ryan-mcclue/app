@@ -69,6 +69,13 @@
   INTERNAL u64 u64_endianness_swap(u64 val) { return 0; }
 #endif
 
+INTERNAL f32 
+f32z_power(f32z z)
+{
+  f32 mag = f32z_mag(z);
+  return SQUARE(mag);
+}
+
 INTERNAL f32
 f32_sin_in(f32 t) 
 {
@@ -112,6 +119,17 @@ INTERNAL memory_index
 memory_index_round_to_nearest(memory_index val, memory_index near)
 {
   memory_index result = val;
+
+  result += near - 1;
+  result -= result % near;
+  
+  return result;
+}
+
+INTERNAL u32
+u32_round_to_nearest(u32 val, u32 near)
+{
+  u32 result = val;
 
   result += near - 1;
   result -= result % near;
@@ -182,13 +200,11 @@ f32_rand_range(u32 *seed, f32 min, f32 max)
 INTERNAL f32
 f32_norm(f32 start, f32 a, f32 end)
 {
-  f32 result = 0.0f;
-
   a = CLAMP(start, a, end);
+  f32 range = (end - start);
+  if (f32_eq(range, 0.0f)) range = 1.0f;
 
-  result = (end - a) / (end - start);
-
-  return result;
+  return (end - a) / range; 
 }
 
 INTERNAL f32

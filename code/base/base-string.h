@@ -72,16 +72,6 @@ str8(u8 *str, memory_index size)
   return result;
 }
 
-INTERNAL String8
-str8_allocate(MemArena *arena, memory_index len)
-{
-  String8 result = ZERO_STRUCT;
-
-  result.content = MEM_ARENA_PUSH_ARRAY_ZERO(arena, u8, len);
-
-  return result;
-}
-
 INTERNAL void
 str8_to_cstr(String8 s, char *buffer, memory_index buffer_size)
 {
@@ -344,8 +334,9 @@ str8_list_push(MemArena *arena, String8List *list, String8 string)
   list->total_size += string.size;
 }
 
+// TODO: currently segfaults
 INTERNAL void
-str8_list_push_fmt(MemArena *arena, String8List *list, char *fmt, ...)
+str8_list_push_fmt(MemArena *arena, String8List *list, const char *fmt, ...)
 {
   va_list args;
   va_start(args, fmt);
@@ -590,6 +581,47 @@ u32_to_str8(MemArena *arena, u32 x)
  return result;
 }
 
+typedef struct String8Buffer String8Buffer;
+struct String8Buffer
+{
+  memory_index allocated_size;
+  String8 string8;
+};
+
+INTERNAL String8Buffer
+str8buffer_allocate(MemArena *arena, memory_index len)
+{
+  String8Buffer result = ZERO_STRUCT;
+
+  result.allocated_size = len;
+  result.string8.content = MEM_ARENA_PUSH_ARRAY_ZERO(arena, u8, len);
+
+  return result;
+}
+
+#define STR8BUFFER_APPEND(b, ptr) \
+  str8buffer_append((b), (ptr), sizeof(*(ptr)))
+INTERNAL void
+str8buffer_append(String8Buffer *b, void *data, memory_index data_size)
+{
+  if (b->string8.size + data_size <= b->allocated_size)
+  {
+    MEMORY_COPY(b->string8.content + b->string8.size, data, data_size);
+    b->string8.size += data_size;
+  }
+}
+
+INTERNAL String8
+str8_allocate(MemArena *arena, memory_index len)
+{
+  String8 result = ZERO_STRUCT;
+
+  result.content = MEM_ARENA_PUSH_ARRAY_ZERO(arena, u8, len);
+  result.size = len;
+
+  return result;
+}
+
 // TODO(Ryan): Tree traversal: https://hero.handmade.network/episode/code/day202/#1985 
 
 #define ring_write_ptr(base, size, pos, ptr) ring_write((base), (size), (pos), (ptr), sizeof(*(ptr)))
@@ -643,21 +675,12 @@ ring_read(u8 *ring_base, memory_index ring_size, memory_index pos, void *dst, me
   return read_size;
 }
 
-// djb2
+
 INTERNAL u64
 str8_hash(String8 string)
 {
-  u64 result = 5381;
-
-  for (u64 i = 0; i < string.size; i += 1)
-  {
-    result = ((result << 5) + result) + string.content[i];
-  }
-
-  return result;
+  return hash_data(HASH_INIT, string.content, string.size);
 }
-
-
 
 #if 0
 INTERNAL void

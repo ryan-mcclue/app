@@ -179,13 +179,14 @@ fi
 BINARY_NAME="$NAME-$PARAM_MODE"
 RELOAD_NAME="${NAME}-reload"
 RELOAD_BINARY_NAME="$RELOAD_NAME-$PARAM_MODE.so"
+COMPILER_FLAGS+=( "-DBINARY_RELOAD_NAME=\"$RELOAD_BINARY_NAME\"" )
 
 # NOTE(Ryan): Enable various warnings largely related to implicit signed, alignment, casting, promotion issues
 COMPILER_FLAGS+=( "-Wall" "-Wextra" "-Wshadow" "-Wconversion" "-Wdouble-promotion" "-Wformat=2" "-pedantic" )
 COMPILER_FLAGS+=( "-Wundef" "-Wshadow" "-Wpadded" "-fno-common" "-march=native" )
 COMPILER_FLAGS+=( "-Wfloat-equal" "-Wlogical-op" "-Wredundant-decls" "-Wstrict-overflow=2" "-Warray-bounds=2" )
 COMPILER_FLAGS+=( "-Wpointer-arith" "-Wformat-truncation" "-Wmissing-include-dirs" )
-COMPILER_FLAGS+=( "-Wcast-align" "-Wswitch-enum" "-Wsign-conversion" "-Wdisabled-optimization" )
+COMPILER_FLAGS+=( "-Wcast-align" "-Wno-switch" "-Wswitch-default" "-Wsign-conversion" "-Wdisabled-optimization" )
 COMPILER_FLAGS+=( "-Winline" "-Wmissing-declarations" "-Wdouble-promotion" "-Wshadow" "-Wtrampolines" )
 COMPILER_FLAGS+=( "-Wvector-operation-performance" "-Wnull-dereference" "-Winvalid-pch" )
 COMPILER_FLAGS+=( "-Wduplicated-cond" "-Wshift-overflow=2" "-Wcast-align=strict" )
@@ -222,6 +223,7 @@ COMPILER_FLAGS+=( "-isystem code/external/raylib-5.0/src" )
 COMPILER_FLAGS+=( "-Lbuild/raylib" "-Wl,-rpath=build/raylib" )
 LINKER_FLAGS+=( "-lraylib" )
 
+LINKER_FLAGS+=( "-lpthread" )
 LINKER_FLAGS+=( "-Tcode/linker.ld" )
 LINKER_FLAGS+=( "-Wl,--gc-sections" "-Wl,--build-id" "-Wl,--warn-unresolved-symbols" )
 LINKER_FLAGS+=( "-lc" "-lm" "-ldl" )
@@ -241,6 +243,8 @@ elif [[ "$PARAM_MODE" == "optimise" ]]; then
   COMPILER_FLAGS+=( "-flto" )
   COMPILER_FLAGS+=( "-fipa-pta" )
   COMPILER_FLAGS+=( "-fdevirtualize-at-ltrans" )
+  # NOTE(Ryan): remove stack guard loading from fs:0x28
+  # COMPILER_FLAGS+=( "-fno-stack-protector" ) 
 elif [[ "$PARAM_MODE" == "release" ]]; then
   COMPILER_FLAGS+=( "-DDEBUG_BUILD=0 -DRELEASE_BUILD=1" )
   COMPILER_FLAGS+=( "-O3" )
@@ -252,12 +256,21 @@ elif [[ "$PARAM_MODE" == "release" ]]; then
 fi
 
 # NOTE(Ryan): Metaprogram
-$PARAM_COMPILER ${COMPILER_FLAGS[*]} code/meta.cpp -o build/meta-"$PARAM_MODE" ${LINKER_FLAGS[*]}
-./build/meta-"$PARAM_MODE" code/meta.cpp | tee code/meta-gen.h
-exit
+# $PARAM_COMPILER ${COMPILER_FLAGS[*]} code/meta.cpp -o build/meta-"$PARAM_MODE" ${LINKER_FLAGS[*]}
+# ./build/meta-"$PARAM_MODE" code/meta.cpp | tee code/meta-gen.h
 
-# NOTE(Ryan): Hotreloading
-$PARAM_COMPILER -fPIC -shared ${COMPILER_FLAGS[*]} code/"$RELOAD_NAME".cpp -o build/"$RELOAD_BINARY_NAME" ${LINKER_FLAGS[*]}
+if [[ "$BUILD_TYPE" == "tests" ]]; then
+  # NOTE(Ryan): Compile and link assembly experimentation files
+  nasm -f elf64 code/"$NAME"-assembly.asm -o build/"$NAME"-assembly.o
+  $PARAM_LINKER -shared build/"$NAME"-assembly.o -o build/lib"$NAME"-assembly.so
+  LINKER_FLAGS+=( "-l$NAME-assembly" )
+  COMPILER_FLAGS+=( "-Lbuild" "-Wl,-rpath=build" )
+fi
+
+#NOTE(Ryan): Hotreloading
+if [[ "$BUILD_TYPE" == "app" ]]; then
+  $PARAM_COMPILER -fPIC -shared ${COMPILER_FLAGS[*]} code/"$RELOAD_NAME".cpp -o build/"$RELOAD_BINARY_NAME" ${LINKER_FLAGS[*]}
+fi
 
 $PARAM_COMPILER ${COMPILER_FLAGS[*]} code/"$NAME".cpp -o build/"$BINARY_NAME" ${LINKER_FLAGS[*]}
 
@@ -269,22 +282,22 @@ print_end_time
 # arm-none-eabi-objcopy -O ihex build/${BINARY_NAME}.elf build/${BINARY_NAME}.bin
 # cp build/${BINARY_NAME}.map misc/console/{BINARY_NAME}.ino
 
-if [[ "$PARAM_RUN" == "true" ]]; then
-  # NOTE(Ryan): gcov gives profiler error if overriding file
-  #rm -f build/"$BINARY_NAME".gcda 2>/dev/null
-
-  # NOTE(Ryan): Remove ascii colour escape sequences for Vim quickfix window
-  $(pgrep "$BINARY_NAME" >/dev/null) || build/"$BINARY_NAME" ${BINARY_ARGS[@]} | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g"
-
-  # NOTE(Ryan): gcov requires name to be same as source file
-  #mv -f build/"$BINARY_NAME".gcno build/"$NAME".gcno 2>/dev/null
-  #mv -f build/"$BINARY_NAME".gcda build/"$NAME".gcda 2>/dev/null
-
-  #if [[ "$BUILD_TYPE" == "tests" ]]; then
-  #  gcov -b -o build/ code/"$NAME".cpp >/dev/null
-  #  gcovr -e "code/base/.*\.h" 
-  #  rm -f *.gcov
-  #fi
-fi
+#if [[ "$PARAM_RUN" == "true" ]]; then
+#  # NOTE(Ryan): gcov gives profiler error if overriding file
+#  rm -f build/"$BINARY_NAME".gcda 2>/dev/null
+#
+#  # NOTE(Ryan): Remove ascii colour escape sequences for Vim quickfix window
+#  $(pgrep "$BINARY_NAME" >/dev/null) || build/"$BINARY_NAME" ${BINARY_ARGS[@]} | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g"
+#
+#  # NOTE(Ryan): gcov requires name to be same as source file
+#  mv -f build/"$BINARY_NAME".gcno build/"$NAME".gcno 2>/dev/null
+#  mv -f build/"$BINARY_NAME".gcda build/"$NAME".gcda 2>/dev/null
+#
+#  if [[ "$BUILD_TYPE" == "tests" ]]; then
+#    gcov -b -o build/ code/"$NAME".cpp >/dev/null
+#    gcovr -e "code/base/.*\.h" 
+#    rm -f *.gcov
+#  fi
+#fi
 
 # insert_metrics_db

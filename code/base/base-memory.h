@@ -24,10 +24,6 @@
 
 #define MEMORY_MATCH(a, b, n) (memcmp((a), (b), (n)) == 0)
 
-#define KB(x) ((x) << 10)
-#define MB(x) ((x) << 20)
-#define GB(x) (((u64)x) << 30)
-#define TB(x) (((u64)x) << 40)
 
 typedef struct MemArena MemArena;
 struct MemArena
@@ -126,10 +122,19 @@ mem_arena_pop(MemArena *arena, memory_index size)
 }
 
 INTERNAL void
-mem_arena_clear(MemArena *arena)
+mem_arena_reset(MemArena *arena)
 {
   mem_arena_pop(arena, arena->pos);
 }
+
+INTERNAL void
+mem_arena_clear(MemArena *arena)
+{
+  memory_index cur_pos = arena->pos;
+  mem_arena_pop(arena, cur_pos);
+  MEMORY_ZERO(arena->memory, cur_pos - arena->pos);
+}
+
 
 typedef struct ThreadContext ThreadContext;
 struct ThreadContext

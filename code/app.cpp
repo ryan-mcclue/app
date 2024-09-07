@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: zlib-acknowledgement
-#if !TEST_BUILD
-#define PROFILER 1
-#endif
-
-#include "base/base-inc.h"
-#include <raylib.h>
-
 #include "app.h"
+#include "json.cpp"
 
 #include <dlfcn.h>
 
-GLOBAL void *g_app_reload_handle = NULL;
+GLOBAL void *g_code_reload_handle = NULL;
 GLOBAL char g_nil_update_err_msg[128];
-
 INTERNAL void
-app_nil_update(State *state)
+code_nil_update(State *state)
 {
   BeginDrawing();
   ClearBackground(BLACK);
@@ -36,36 +29,44 @@ app_nil_update(State *state)
 
   EndDrawing();
 }
-INTERNAL void app_nil(State *s) {}
-GLOBAL AppCode g_nil_app_code = {
-  .preload = app_nil,
-  .update = app_nil_update,
-  .postload = app_nil
+INTERNAL void code_nil(State *s) {}
+GLOBAL ReloadCode g_nil_code = {
+  .preload = code_nil,
+  .update = code_nil_update,
+  .postload = code_nil,
+  .profiler_end_and_print = code_nil
 };
 
-INTERNAL AppCode 
-app_reload(void)
+INTERNAL ReloadCode 
+code_reload(void)
 {
-  if (g_app_reload_handle != NULL) dlclose(g_app_reload_handle);
+  // IMPORTANT: will return handle to same shared object unless closed first. 
+  // so, can't readily hold a duplicate copy in the event of a failed load
+  if (g_code_reload_handle != NULL) dlclose(g_code_reload_handle);
 
-  g_app_reload_handle = dlopen("build/app-reload-debug.so", RTLD_NOW);
-  if (g_app_reload_handle == NULL) return g_nil_app_code;
+  g_code_reload_handle = dlopen("build/" BINARY_RELOAD_NAME, RTLD_NOW);
+  if (g_code_reload_handle == NULL) return g_nil_code;
 
-  AppCode result = ZERO_STRUCT;
-  void *name = dlsym(g_app_reload_handle, "app_preload");
-  if (name == NULL) return g_nil_app_code;
-  result.preload = (app_preload_t)name;
+  ReloadCode result = ZERO_STRUCT;
+  void *name = dlsym(g_code_reload_handle, "code_preload");
+  if (name == NULL) return g_nil_code;
+  result.preload = (code_preload_t)name;
 
-  name = dlsym(g_app_reload_handle, "app_update");
-  if (name == NULL) return g_nil_app_code;
-  result.update = (app_update_t)name;
+  name = dlsym(g_code_reload_handle, "code_update");
+  if (name == NULL) return g_nil_code;
+  result.update = (code_update_t)name;
 
-  name = dlsym(g_app_reload_handle, "app_postload");
-  if (name == NULL) return g_nil_app_code;
-  result.postload = (app_postload_t)name;
+  name = dlsym(g_code_reload_handle, "code_postload");
+  if (name == NULL) return g_nil_code;
+  result.postload = (code_postload_t)name;
+
+  name = dlsym(g_code_reload_handle, "code_profiler_end_and_print");
+  if (name == NULL) return g_nil_code;
+  result.profiler_end_and_print = (code_profiler_end_and_print_t)name;
 
   return result;
 }
+
 
 #if TEST_BUILD
 int testable_main(int argc, char *argv[])
@@ -75,13 +76,6 @@ int main(int argc, char *argv[])
 {
   global_debugger_present = linux_was_launched_by_gdb();
   MemArena *arena = mem_arena_allocate(GB(8), MB(64));
-
-  // String8List cmd_line = ZERO_STRUCT;
-  // for (u32 i = 0; i < argc; i += 1)
-  // {
-  //   String8 arg = str8_cstr(argv[i]);
-  //   str8_list_push(arena, &cmd_line, arg);
-  // }
 
   ThreadContext tctx = thread_context_allocate(GB(8), MB(64));
   tctx.is_main_thread = true;
@@ -94,52 +88,54 @@ int main(int argc, char *argv[])
   linux_append_ldlibrary(str8_lit("./build"));
 #endif
 
-  profiler_init();
-
-  SetTraceLogLevel(LOG_ERROR); 
-  SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
-
-  u32 screen_width = 1080;
-  u32 screen_height = 720;
-  InitWindow(screen_width, screen_height, "Music Visualiser");
-  SetTargetFPS(60);
-
-  InitAudioDevice();
-
   State *state = MEM_ARENA_PUSH_STRUCT_ZERO(arena, State);
   state->arena = arena;
   state->frame_arena = mem_arena_allocate(GB(1), MB(64));
 
   state->assets.arena = mem_arena_allocate(GB(1), MB(64));
 
-  for (u32 i = 0; i < MUSIC_FILE_POOL_SIZE; i += 1)
-  {
-     MusicFileIndex *mf_idx = &state->mf_idx_pool[i]; 
-     mf_idx->index = i;
-     SLL_STACK_PUSH(state->first_free_mf_idx, mf_idx);
-  }
+  //gen_file("assets/pairs.data", MILLION(1));
+  u32 chunk_size = MB(4);
+  state->dataset_sum = async_read_and_sum("assets/pairs.data", chunk_size);
 
-  AppCode app_code = app_reload();
+  u32 screen_width = 1920;
+  u32 screen_height = 1080;
+  SetTraceLogLevel(LOG_WARNING); 
+  SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
+  InitWindow(screen_width, screen_height, "Game");
+  SetTargetFPS(60);
+
+  InitAudioDevice();
+
+  ReloadCode code = code_reload();
+  code.preload(state);
+  u64 prev_code_reload_time = GetFileModTime("build/" BINARY_RELOAD_NAME);
+  f32 reload_time = 0.25f;
+  f32 reload_timer = reload_time;
   for (b32 quit = false; !quit; state->frame_counter += 1)
   {  
-    if (IsKeyPressed(KEY_R))
+    u64 code_modify_time = GetFileModTime("build/" BINARY_RELOAD_NAME);
+    if (code_modify_time > prev_code_reload_time)
     {
-      app_code.preload(state);
-      app_code = app_reload();
-      app_code.postload(state);
+      code.preload(state);
+      code = code_reload();
+      code.postload(state);
+      if (code.update != g_nil_code.update) prev_code_reload_time = code_modify_time;
     }
 
-    app_code.update(state);
+    code.update(state);
 
     quit = WindowShouldClose();
     #if ASAN_ENABLED
       if (GetTime() >= 5.0) quit = true;
     #endif
-    mem_arena_clear(state->frame_arena);
+    mem_arena_reset(state->frame_arena);
   }
   CloseWindow();
 
-  profiler_end_and_print();
+  code.profiler_end_and_print(state);
+
+  // profiler_end_and_print();
   // PROFILE_BANDWIDTH(), PROFILE_BLOCK(), PROFILE_FUNCTION(), 
 
   // NOTE(Ryan): Run explicitly so as to not register a leak for arenas
@@ -147,4 +143,3 @@ int main(int argc, char *argv[])
   return 0;
 }
 
-PROFILER_END_OF_COMPILATION_UNIT

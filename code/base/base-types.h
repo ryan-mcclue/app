@@ -57,7 +57,6 @@ typedef size_t memory_index;
   #define f32z_mag(z) cabsf(z)
 #endif
 
-
 #include <stdbool.h>
 
 #define GLOBAL static
@@ -173,6 +172,19 @@ struct Handle
   void *addr;
   u64 gen;
 };
+INTERNAL Handle
+handle_create(void *addr, u64 gen)
+{
+  return {addr, gen};
+}
+INTERNAL Handle
+zero_handle_create(void)
+{
+  return {NULL, 0};
+}
+
+#define TO_HANDLE(t) \
+  ((t != NULL) ? handle_create(t, t->gen) : zero_handle_create())
 
 typedef struct SourceLoc SourceLoc;
 struct SourceLoc
@@ -232,6 +244,10 @@ struct SourceLoc
 #define EACH_ENUM(type, it) type it = (type)0; it < type##_COUNT; it = (type)(it+1)
 #define EACH_NONZERO_ENUM(type, it) type it = (type)1; it < type##_COUNT; it = (type)(it+1)
 
+#define KB(x) ((x) << 10)
+#define MB(x) ((x) << 20)
+#define GB(x) (((u64)x) << 30)
+#define TB(x) (((u64)x) << 40)
 
 // TODO(Ryan): Date/time helpers?
 
@@ -242,6 +258,7 @@ struct SourceLoc
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define CLAMP(min,x,max) (((x)<(min))?(min):((max)<(x))?(max):(x))
+#define CLAMP01(x) CLAMP(0, x, 1) 
 #define CLAMP_TOP(a,b) MIN(a,b)
 #define CLAMP_BOTTOM(a,b) MAX(a,b)
 
@@ -269,8 +286,11 @@ struct SourceLoc
 #define COUNTED_POINTER(count)
 // COUNTED_POINTER(10) u32 *array
 
+#define QUICK_SORT(base, type, count, compare_function) \
+  qsort((base), (count), sizeof(type), (int(*)(const void *, const void *))(compare_function))
+
 // NOTE(Ryan): Designated initialisers allow repetition and ZII
-#define draw_rect(r, ...) \
+#define draw_rectdasdsadsad(r, ...) \
   draw_rect_((r), &(DrawRectParams){.color = {1,1,1,1}, __VA_ARGS__})
 
 // NOTE(Ryan): Memory mapped address hierarchy typically 'bus + peripheral + register' 
@@ -457,8 +477,25 @@ concat_list(List *a, List *b)
 }
 #endif
 
+// djb2
+#define HASH_INIT 5381
+INTERNAL u64
+hash_data(u64 init, void *data, u32 data_size)
+{
+  u64 hash = init;
+  u8 *bytes = (u8 *)data;
+  for (u64 i = 0; i < data_size; i += 1)
+  {
+    hash = ((hash << 5) + hash) + bytes[i];
+  }
+  return hash;
+}
+// murmur hash on filename pointer for better collision?
+// perhaps just multiply to combine hashes?
+
+// murmur
 INTERNAL u64 
-hash_ptr(void *p)
+hash_ptr(const void *p)
 {
   u64 h = (u64)p;
 
@@ -467,6 +504,15 @@ hash_ptr(void *p)
   h = h ^ (h >> 31);
 
   return h;
+}
+
+// IMPORTANT(Ryan): x86intrin.h includes approx 46kLOC!
+INTERNAL u64
+read_cpu_timer(void)
+{
+  u32 a, d = 0;
+  asm volatile("rdtsc" : "=a" (a), "=d" (d));
+  return ((u64)d << 32) | a;
 }
 
 #endif

@@ -4,6 +4,12 @@
 
 #include "base/base-context.h"
 #include "base/base-types.h"
+#if PLATFORM_LINUX
+  #if !TEST_BUILD
+    #define PROFILER 1
+  #endif
+  #include "base/base-profiler.h"
+#endif
 // IMPORTANT: Uses stdlib math
 #include "base/base-math.h"
 // IMPORTANT: Uses stdlib malloc
@@ -21,16 +27,14 @@
   // gcc -dM -E - > file.txt
 #elif PLATFORM_LINUX 
   #include "base/base-dev-linux.h"
+  #include "base-thread.h"
 #endif
 
 #if PLATFORM_LINUX || PLATFORM_MAC || PLATFORM_WINDOWS
   #include "base/base-file.h"
   #include "base/base-repetition.h"
-  #include "base/base-profiler.h"
 #endif
 
 
-// TODO(Ryan):
-// #include "base-thread.h"
 
 #endif

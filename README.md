@@ -10,9 +10,10 @@ Music visualiser app
 sudo apt install -y build-essential git cmake libasound2-dev libx11-dev libxrandr-dev \
                     libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev \
                     libxinerama-dev libwayland-dev libxkbcommon-dev
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON ../code/external/raylib-5.0/
-make -j$(getconf _NPROCESSORS_ONLN)
+mkdir -p "build"
+cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -B "build" -S "code/external/raylib-5.0"
+cmake --build "build"
+sudo cmake --install "build" 
 
 # Optional if want release build
 mkdir private
